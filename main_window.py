@@ -732,7 +732,10 @@ class MainWindow(QtWidgets.QWidget):
         il.setSpacing(4)
 
         try:
-            updates_data = [(u["version"], u["body"]) for u in get_updates()]
+            updates_raw = get_updates()
+            updates_raw.sort(key=lambda u: u.get("id", 0), reverse=True)
+            updates_data = [(u["version"], u["body"]) for u in updates_raw]
+
         except Exception:
             updates_data = [("offline", "Не удалось загрузить обновления с сервера.")]
 
