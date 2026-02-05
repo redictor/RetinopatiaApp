@@ -1834,12 +1834,24 @@ class MainWindow(QtWidgets.QWidget):
         delete_btn.clicked.connect(self._delete_account)
         l.addWidget(delete_btn)
 
-        footer = QtWidgets.QLabel("by redictorb, 2026 • MIT License")
+        last_v = self._latest_version()
+        footer = QtWidgets.QLabel(f"by redictorb, 2026 • MIT License • {last_v}")
         footer.setAlignment(QtCore.Qt.AlignCenter)
         footer.setStyleSheet("font-size: 11px; color: #8a8a8a;")
         l.addWidget(footer)
 
         return w
+    
+    def _latest_version(self) -> str:
+        try:
+            updates = get_updates() or []
+            if not updates:
+                return "unknown version"
+            latest = max(updates, key=lambda u: int(u.get("id", 0) or 0))
+            return str(latest.get("version", "unknown version"))
+        except Exception:
+            return "unknown version"
+
     def _on_reset_training(self):
         dlg = RoundedDialog(
             self,
