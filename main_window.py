@@ -990,6 +990,11 @@ class MainWindow(QtWidgets.QWidget):
             done = QtCore.pyqtSignal(dict)
             fail = QtCore.pyqtSignal(str)
 
+            def __init__(self, image_path: str, out_png: str):
+                super().__init__()
+                self.image_path = image_path
+                self.out_png = out_png
+
             def run(self):
                 try:
                     py = sys.executable
@@ -1179,6 +1184,7 @@ class MainWindow(QtWidgets.QWidget):
             def __init__(self, mainwin: "MainWindow"):
                 super().__init__()
                 self._mw = mainwin
+                self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
                 self.samples_dir = os.path.join(
                     os.path.dirname(os.path.abspath(__file__)),
@@ -1195,6 +1201,13 @@ class MainWindow(QtWidgets.QWidget):
 
                 self._build()
                 self._set_step(0)
+
+            def _select_stage(self, stage: int):
+                if stage < 0 or stage > 4:
+                    return
+
+                self.stage_combo.setCurrentIndex(stage)
+                self.selected_stage = stage
 
             def _build(self):
                 self.setStyleSheet("""
@@ -1540,86 +1553,90 @@ class MainWindow(QtWidgets.QWidget):
                 self._worker.start()
 
             def _on_ai_done(self, data: dict, out_png: str):
-                stage_id = int(data.get("stage_id", 0))
-                pmax = float(data.get("p_max", 0.0))
-
-                heat_u8 = cv2.imdecode(np.fromfile(out_png, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-                if heat_u8 is None:
-                    raise RuntimeError("Не удалось прочитать heatmap.png")
-
-                heat = heat_u8.astype(np.float32) / 255.0
-
-                # пользов. маска -> 224
-                um = (self.canvas.user_mask > 0).astype(np.uint8)
-                um_224 = cv2.resize(um, (224, 224), interpolation=cv2.INTER_NEAREST).astype(bool)
-
-                # маска ИИ
-                am_224 = _ai_mask_from_heatmap(heat, top_frac=0.30)
-
-                sim = _dice(um_224, am_224)          # 0..1
-                area_score = _score_1to5_from_similarity(sim)
-
-                user_stage = self.stage_combo.currentIndex()
-                ai_stage = stage_id
-                diff_stage = abs(user_stage - ai_stage)
-                stage_score = max(1, 5 - diff_stage)
-
-                w_stage = 0.8
-                w_area  = 0.2
-                final_score = int(round(w_stage * stage_score + w_area * area_score))
-                final_score = max(1, min(5, final_score))
-
-                # сохранить в статистику
                 try:
-                    self._mw._stats_append({
-                        "user_stage": int(user_stage),
-                        "ai_stage": int(ai_stage),
-                        "score": int(final_score),
-                        "dice": float(sim),
-                        "p_max": float(pmax),
-                    })
-                except Exception:
-                    pass
+                    stage_id = int(data.get("stage_id", 0))
+                    pmax = float(data.get("p_max", 0.0))
 
-                # показать теплокарту на канвасе (уже после результата — можно включить)
-                self.canvas.set_ai_heat(heat, alpha_cam=0.33)
+                    heat_u8 = cv2.imdecode(np.fromfile(out_png, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+                    if heat_u8 is None:
+                        raise RuntimeError("Не удалось прочитать heatmap.png")
 
-                # профессиональный текст
-                ai_txt = STAGE_NAMES[ai_stage]
-                user_txt = STAGE_NAMES[user_stage]
+                    heat = heat_u8.astype(np.float32) / 255.0
 
-                self.ai_out.setText(
-                    f"Автоматический анализ определил: {ai_txt}.\n"
-                    f"Ваш ответ: {user_txt}."
-                )
-                self.ai_out.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
-                self.result_hint.setText(
-                    f"Совпадение области внимания (Dice): {sim:.2f} • "
-                    f"Уверенность модели: {pmax:.2f} • "
-                    f"Оценка: {final_score}/5"
-                )
-                self.result_hint.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
-                self.score_badge.setText(f"{final_score}/5")
-                self.result_frame.setVisible(True)
+                    # пользов. маска -> 224
+                    um = (self.canvas.user_mask > 0).astype(np.uint8)
+                    um_224 = cv2.resize(um, (224, 224), interpolation=cv2.INTER_NEAREST).astype(bool)
 
-                # этап 4 — блокируем рисование и даём варианты
-                self._set_step(3)
+                    # маска ИИ
+                    am_224 = _ai_mask_from_heatmap(heat, top_frac=0.30)
 
-                def on_restart():
-                    self._reset_training()
+                    sim = _dice(um_224, am_224)          # 0..1
+                    area_score = _score_1to5_from_similarity(sim)
 
-                def on_stats():
+                    user_stage = self.stage_combo.currentIndex()
+                    ai_stage = stage_id
+                    diff_stage = abs(user_stage - ai_stage)
+                    stage_score = max(1, 5 - diff_stage)
+
+                    w_stage = 0.8
+                    w_area  = 0.2
+                    final_score = int(round(w_stage * stage_score + w_area * area_score))
+                    final_score = max(1, min(5, final_score))
+
+                    # сохранить в статистику
                     try:
-                        self._mw.set_page(2)
+                        self._mw._stats_append({
+                            "user_stage": int(user_stage),
+                            "ai_stage": int(ai_stage),
+                            "score": int(final_score),
+                            "dice": float(sim),
+                            "p_max": float(pmax),
+                        })
                     except Exception:
                         pass
 
-                body = (
-                    f"ИИ определил: {ai_txt}.\n"
-                    f"Ваш ответ: {user_txt}.\n\n"
-                    f"Совпадение области внимания: {sim:.2f}.\n"
-                    f"Итоговая оценка: {final_score}/5."
-                )
+                    # показать теплокарту на канвасе (уже после результата — можно включить)
+                    self.canvas.set_ai_heat(heat, alpha_cam=0.33)
+
+                    # профессиональный текст
+                    ai_txt = STAGE_NAMES[ai_stage]
+                    user_txt = STAGE_NAMES[user_stage]
+
+                    self.ai_out.setText(
+                        f"Автоматический анализ определил: {ai_txt}.\n"
+                        f"Ваш ответ: {user_txt}."
+                    )
+                    self.ai_out.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
+                    self.result_hint.setText(
+                        f"Совпадение области внимания (Dice): {sim:.2f} • "
+                        f"Уверенность модели: {pmax:.2f} • "
+                        f"Оценка: {final_score}/5"
+                    )
+                    self.result_hint.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
+                    self.score_badge.setText(f"{final_score}/5")
+                    self.result_frame.setVisible(True)
+
+                    # этап 4 — блокируем рисование и даём варианты
+                    self._set_step(3)
+
+                except Exception as e:
+                    self._on_ai_fail(str(e))
+
+            # def on_restart():
+            #     self._reset_training()
+
+            # def on_stats():
+            #     try:
+            #         self._mw.set_page(2)
+            #     except Exception:
+            #         pass
+
+            # body = (
+            #     f"ИИ определил: {ai_txt}.\n"
+            #     f"Ваш ответ: {user_txt}.\n\n"
+            #     f"Совпадение области внимания: {sim:.2f}.\n"
+            #     f"Итоговая оценка: {final_score}/5."
+            # )
 
             def _on_ai_fail(self, err: str):
                 RoundedDialog.warning("Ошибка", f"ИИ анализ не удался:\n{err}")
