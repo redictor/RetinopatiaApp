@@ -990,22 +990,28 @@ class MainWindow(QtWidgets.QWidget):
             done = QtCore.pyqtSignal(dict)
             fail = QtCore.pyqtSignal(str)
 
-            def __init__(self, image_path: str, out_png: str):
-                super().__init__()
-                self.image_path = image_path
-                self.out_png = out_png
-
             def run(self):
                 try:
                     py = sys.executable
                     cmd = [py, "infer_torch.py", self.image_path, self.out_png]
-                    res = subprocess.run(cmd, capture_output=True, text=True)
+
+                    res = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60  # ← ВАЖНО
+                    )
+
                     if res.returncode != 0:
                         err = (res.stderr or res.stdout or "").strip() or "Неизвестная ошибка"
                         self.fail.emit(err)
                         return
+
                     data = json.loads(res.stdout.strip())
                     self.done.emit(data)
+
+                except subprocess.TimeoutExpired:
+                    self.fail.emit("Превышено время ожидания анализа (60 сек).")
                 except Exception as e:
                     self.fail.emit(str(e))
 
@@ -1748,9 +1754,6 @@ class MainWindow(QtWidgets.QWidget):
         status_layout.setSpacing(6)
         status_layout.setContentsMargins(0, 0, 0, 0)
 
-        status_layout.addLayout(status_layout)
-
-
         change_pwd_btn = QtWidgets.QPushButton("Сменить пароль")
         change_pwd_btn.setFixedHeight(38)
         change_pwd_btn.setStyleSheet("""
@@ -1890,16 +1893,30 @@ class MainWindow(QtWidgets.QWidget):
         is_verified = bool(st.get("is_verified", False))
 
     def _logout(self):
-        from ui_dialogs import RoundedDialog
+        from ui_dialogs import ConfirmDialog
+        from api_client import logout
 
-        RoundedDialog.warning(
+        ok = ConfirmDialog.ask(
             "Выход из аккаунта",
-            "Вы действительно хотите выйти из аккаунта?"
+            "Вы действительно хотите выйти из аккаунта?",
+            confirm_text="Выйти",
+            cancel_text="Отмена",
+            danger=False
         )
+
+        if not ok:
+            return
+
+        try:
+            logout()  # сброс токена
+        except Exception:
+            pass
 
         self.close()
         if self.on_logout:
             self.on_logout()
+
+
 
     def _change_password(self):
         from ui_dialogs import ChangePasswordDialog

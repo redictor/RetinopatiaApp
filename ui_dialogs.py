@@ -148,6 +148,160 @@ class RoundedDialog(QtWidgets.QDialog):
         d = RoundedDialog(title, text, "warning")
         d.exec_()
 
+class ConfirmDialog(QtWidgets.QDialog):
+    def __init__(self, title: str, text: str, confirm_text: str = "Да", cancel_text: str = "Отмена", danger: bool = False):
+        parent = QtWidgets.QApplication.activeWindow()
+        super().__init__(parent)
+        self._parent_for_center = parent
+
+        self._drag_pos = None
+
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.Dialog)
+        self.setWindowModality(QtCore.Qt.ApplicationModal)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+
+        outer = QtWidgets.QFrame(self)
+        outer.setObjectName("outer")
+        outer.setStyleSheet("""
+            QFrame#outer {
+                background-color: #ffffff;
+                border-radius: 18px;
+            }
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(outer)
+
+        layout = QtWidgets.QVBoxLayout(outer)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QWidget()
+        header.setFixedHeight(42)
+        header.mousePressEvent = self._header_mouse_press
+        header.mouseMoveEvent = self._header_mouse_move
+        header.mouseReleaseEvent = self._header_mouse_release
+
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(10)
+
+        icon = QtWidgets.QLabel()
+        icon.setFixedSize(34, 34)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+        icon.mousePressEvent = self._header_mouse_press
+        icon.mouseMoveEvent = self._header_mouse_move
+        icon.mouseReleaseEvent = self._header_mouse_release
+
+        if danger:
+            icon.setStyleSheet("background-color: #FF4444; color: white; border-radius: 17px; font-weight: 900;")
+            icon.setText("!")
+        else:
+            icon.setStyleSheet("background-color: #0078D7; color: white; border-radius: 17px; font-weight: 900;")
+            icon.setText("?")
+
+        title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #222;")
+        title_lbl.mousePressEvent = self._header_mouse_press
+        title_lbl.mouseMoveEvent = self._header_mouse_move
+        title_lbl.mouseReleaseEvent = self._header_mouse_release
+
+        close_btn = QtWidgets.QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f2f2f2;
+                border: none;
+                border-radius: 14px;
+                color: #444;
+                font-weight: 700;
+            }
+            QPushButton:hover { background-color: #e8e8e8; }
+        """)
+        close_btn.clicked.connect(self.reject)
+
+        header_layout.addWidget(icon)
+        header_layout.addWidget(title_lbl)
+        header_layout.addStretch(1)
+        header_layout.addWidget(close_btn)
+
+        layout.addWidget(header)
+
+        text_lbl = QtWidgets.QLabel(text)
+        text_lbl.setWordWrap(True)
+        text_lbl.setStyleSheet("font-size: 13px; color: #444;")
+        layout.addWidget(text_lbl)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+
+        cancel_btn = QtWidgets.QPushButton(cancel_text)
+        cancel_btn.setFixedSize(140, 36)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f3f3;
+                color: #222;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            QPushButton:hover { background-color: #e7e7e7; }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+
+        confirm_btn = QtWidgets.QPushButton(confirm_text)
+        confirm_btn.setFixedSize(140, 36)
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {'#FF4444' if danger else '#0078D7'};
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 800;
+            }}
+            QPushButton:hover {{ background-color: {'#CC0000' if danger else '#005499'}; }}
+        """)
+        confirm_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(confirm_btn)
+        layout.addLayout(btn_row)
+
+        self.setFixedWidth(440)
+        self.adjustSize()
+        QtCore.QTimer.singleShot(0, self._center_on_parent)
+
+    def _center_on_parent(self):
+        parent = self._parent_for_center
+        if parent is None:
+            screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+            self.move(screen.center().x() - self.width() // 2,
+                      screen.center().y() - self.height() // 2)
+            return
+
+        pg = parent.frameGeometry()
+        self.move(pg.center().x() - self.width() // 2,
+                  pg.center().y() - self.height() // 2)
+
+    def _header_mouse_press(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+
+    def _header_mouse_move(self, event):
+        if self._drag_pos and event.buttons() & QtCore.Qt.LeftButton:
+            self.move(event.globalPos() - self._drag_pos)
+
+    def _header_mouse_release(self, event):
+        self._drag_pos = None
+
+    @staticmethod
+    def ask(title: str, text: str, confirm_text: str = "Да", cancel_text: str = "Отмена", danger: bool = False) -> bool:
+        d = ConfirmDialog(title, text, confirm_text=confirm_text, cancel_text=cancel_text, danger=danger)
+        return d.exec_() == QtWidgets.QDialog.Accepted
+
 class DeleteAccountDialog(QtWidgets.QDialog):
     def __init__(self, parent, username: str):
         super().__init__(parent)
@@ -496,7 +650,7 @@ class ChangePasswordDialog(QtWidgets.QDialog):
             RoundedDialog.warning("Ошибка", "Новый пароль и повтор не совпадают.")
             return
 
-        if not change_password(old_pw, new_pw):
+        if not change_password(self.username, old_pw, new_pw):
             RoundedDialog.warning("Ошибка", "Текущий пароль введён неверно (или вы не авторизованы).")
             return
 
