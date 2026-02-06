@@ -1,4 +1,4 @@
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import change_password
 
 class RoundedDialog(QtWidgets.QDialog):
@@ -6,7 +6,6 @@ class RoundedDialog(QtWidgets.QDialog):
         parent = QtWidgets.QApplication.activeWindow()
         super().__init__(parent)
         self._parent_for_center = parent
-
 
         self._drag_pos = None
 
@@ -18,8 +17,9 @@ class RoundedDialog(QtWidgets.QDialog):
         outer.setObjectName("outer")
         outer.setStyleSheet("""
             QFrame#outer {
-                background-color: #ffffff;
+                background-color: #F0F0F0;  
                 border-radius: 18px;
+                border: 1px solid #D6D6D6;
             }
         """)
 
@@ -49,11 +49,23 @@ class RoundedDialog(QtWidgets.QDialog):
         icon.mouseReleaseEvent = self._header_mouse_release
 
         if kind == "warning":
-            icon.setStyleSheet("background-color: #FF4444; color: white; border-radius: 17px; font-weight: 700;")
-            icon.setText("!")
+            icon.setStyleSheet(
+                "background-color: #FF4444; border-radius: 17px;"
+            )
+            pixmap = QtGui.QPixmap("assets/icons/warning.png")
         else:
-            icon.setStyleSheet("background-color: #0078D7; color: white; border-radius: 17px; font-weight: 700;")
-            icon.setText("i")
+            icon.setStyleSheet(
+                "background-color: #0078D7; border-radius: 17px;"
+            )
+            pixmap = QtGui.QPixmap("assets/icons/info.png")
+
+        icon.setPixmap(
+            pixmap.scaled(
+                20, 20,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation
+            )
+        )
 
         title_lbl = QtWidgets.QLabel(title)
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 700; color: #222;")

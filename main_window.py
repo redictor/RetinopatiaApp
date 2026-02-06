@@ -8,13 +8,12 @@ from ui_dialogs import DeleteAccountDialog, RoundedDialog
 import numpy as np
 import datetime
 import cv2
-
 import json
 import random
 import subprocess
 import tempfile
 import datetime
-
+from main import current_v
 class LineChartWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,43 +116,43 @@ class MainWindow(QtWidgets.QWidget):
 
         self._account_status = {"is_verified": False, "email": None}
     
+    def _ru_plural(self, n: int, one: str, few: str, many: str) -> str:
+        n = abs(int(n))
+        if 11 <= (n % 100) <= 14:
+            return many
+        if n % 10 == 1:
+            return one
+        if 2 <= (n % 10) <= 4:
+            return few
+        return many
+
     def _format_ago(self, ts_iso: str) -> str:
         if not ts_iso or ts_iso == "—":
             return "—"
+
         try:
-            dt = datetime.datetime.fromisoformat(ts_iso.replace("Z", ""))
+            s = str(ts_iso).replace("Z", "").replace(" ", "T")
+            t = datetime.datetime.fromisoformat(s)
         except Exception:
-            return ts_iso 
+            return "—"
 
         now = datetime.datetime.now()
-        diff = now - dt
-        sec = int(diff.total_seconds())
-        if sec < 0:
-            sec = 0
+        delta = now - t
+        secs = int(delta.total_seconds())
+        if secs < 0:
+            secs = 0
 
-        if sec < 20:
-            return "только что"
-        if sec < 60:
-            return f"{sec} сек назад"
-
-        mins = sec // 60
+        mins = secs // 60
         if mins < 60:
-            return f"{mins} мин назад"
+            m = max(1, mins)
+            return f"{m} {self._ru_plural(m, 'минуту', 'минуты', 'минут')} назад"
 
         hours = mins // 60
         if hours < 24:
-            return f"{hours} час{'а' if 2 <= hours % 10 <= 4 and not (12 <= hours <= 14) else ''} назад"
+            return f"{hours} {self._ru_plural(hours, 'час', 'часа', 'часов')} назад"
 
         days = hours // 24
-        if days < 30:
-            return f"{days} дн{'я' if days % 10 in (2,3,4) and not (12 <= days <= 14) else 'ей'} назад"
-
-        months = days // 30
-        if months < 12:
-            return f"{months} мес назад"
-
-        years = months // 12
-        return f"{years} г назад"
+        return f"{days} {self._ru_plural(days, 'день', 'дня', 'дней')} назад"
 
     def _refresh_stats_and_home(self):
         try:
@@ -401,6 +400,45 @@ class MainWindow(QtWidgets.QWidget):
         body.addWidget(content, 1)
         root.addLayout(body)
         QtCore.QTimer.singleShot(0, self._refresh_stats_and_home)
+        self._check_update()
+
+    def _ver_tuple(self, v: str):
+        s = (v or "").strip().lower()
+        if s.startswith("v."):
+            s = s[2:]
+        elif s.startswith("v"):
+            s = s[1:]
+        parts = s.split(".")
+        nums = []
+        for p in parts:
+            try:
+                nums.append(int(p))
+            except:
+                nums.append(0)
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums[:3])
+
+    def _check_update(self):
+        try:
+            updates = get_updates()
+            if not updates:
+                return
+
+            latest = max(updates, key=lambda u: int(u.get("id", 0) or 0))
+            latest_ver = str(latest.get("version", "")).strip()
+            if not latest_ver:
+                return
+
+            if self._ver_tuple(latest_ver) > self._ver_tuple(current_v):
+                RoundedDialog.info(
+                    "Доступно обновление",
+                    f"Установлена версия: {current_v}\n"
+                    f"Доступна версия: {latest_ver}"
+                )
+
+        except Exception as e:
+            RoundedDialog.warning("Update check error", str(e))
 
     def _nav_button_style(self, active: bool) -> str:
         if active:
@@ -583,7 +621,7 @@ class MainWindow(QtWidgets.QWidget):
             cl.addWidget(h)
             return c, v
 
-        c1, self.home_last_activity_lbl = stat_card("Последняя активность", "—", "Появится после первой тренировки")
+        c1, self.home_last_activity_lbl = stat_card("Последняя активность", "—", "Дата последней тренировки")
         c2, self.home_eff_lbl = stat_card("Эффективность", "—%", "Средняя точность ответов")
         c3, self.home_total_lbl = stat_card("Проведено тренировок", "—", "Количество решённых заданий")
 
@@ -1786,13 +1824,13 @@ class MainWindow(QtWidgets.QWidget):
         l.addWidget(delete_btn)
 
         last_v = self._latest_version()
-        footer = QtWidgets.QLabel(f"by redictorb, 2026 • MIT License • {last_v}")
+        footer = QtWidgets.QLabel(f"by redictorb, 2026 • MIT License • {current_v}")
         footer.setAlignment(QtCore.Qt.AlignCenter)
         footer.setStyleSheet("font-size: 11px; color: #8a8a8a;")
         l.addWidget(footer)
 
         return w
-    
+
     def _latest_version(self) -> str:
         try:
             updates = get_updates() or []

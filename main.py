@@ -2,6 +2,7 @@ import os
 import sys
 
 venv_dir = os.path.dirname(os.path.dirname(sys.executable))
+current_v = "0.1.9"
 
 qt_plugins = os.path.join(
     venv_dir,
