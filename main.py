@@ -14,13 +14,15 @@ qt_plugins = os.path.join(
 
 platforms = os.path.join(qt_plugins, "platforms")
 
-os.environ["QT_PLUGIN_PATH"] = qt_plugins
-os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = platforms
-os.environ["QT_QPA_PLATFORM"] = "windows"
+# Only debug info!
+# os.environ["QT_PLUGIN_PATH"] = qt_plugins
+# os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = platforms
+# os.environ["QT_QPA_PLATFORM"] = "windows"
 
-print("[QT FIX] VENV DIR =", venv_dir)
-print("[QT FIX] QT_PLUGIN_PATH =", qt_plugins)
-print("[QT FIX] PLATFORMS_PATH =", platforms)
+# print("[QT FIX] VENV DIR =", venv_dir)
+# print("[QT FIX] QT_PLUGIN_PATH =", qt_plugins)
+# print("[QT FIX] PLATFORMS_PATH =", platforms)
+
 from PyQt5 import QtWidgets
 from login_window import LoginWindow
 from registration_window import RegistrationWindow
