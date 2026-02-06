@@ -1,8 +1,6 @@
-# api_client.py
 import requests
 from typing import Optional, Dict, Any, List
 
-# !!! твой Render URL
 BASE_URL = "https://retinoserver.onrender.com"
 
 _timeout = 10
@@ -46,7 +44,6 @@ def username_status(username: str) -> str:
         data = r.json()
         return data.get("status", "ok")
     if r.status_code == 404:
-        # если эндпоинт не существует на сервере
         return "unknown"
     r.raise_for_status()
     return "unknown"
@@ -71,7 +68,6 @@ def authenticate_user(username: str, password: str) -> bool:
             _token = None
             return False
 
-        # любые 5xx (502/500) и прочее — просто False без краша
         _token = None
         return False
 
@@ -79,12 +75,9 @@ def authenticate_user(username: str, password: str) -> bool:
         _token = None
         return False
 
-
-
 def logout() -> None:
     global _token
     _token = None
-
 
 def change_password(username: str, old_password: str, new_password: str) -> bool:
     r = requests.post(
@@ -104,7 +97,6 @@ def delete_user_soft(confirm_phrase: str = "delete my account") -> bool:
         timeout=_timeout,
     )
     return r.status_code == 200
-
 
 def get_updates() -> List[Dict[str, Any]]:
     r = requests.get(f"{BASE_URL}/public/updates", headers=_headers(), timeout=_timeout)
@@ -133,7 +125,6 @@ def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float
     )
     return r.status_code == 200
 
-
 def get_training_history(limit: int = 2000) -> List[Dict[str, Any]]:
     r = requests.get(
         f"{BASE_URL}/training/history",
@@ -147,9 +138,6 @@ def get_training_history(limit: int = 2000) -> List[Dict[str, Any]]:
 
 
 def get_maintenance_status() -> Dict[str, Any]:
-    """
-    GET /status/maintenance -> {"enabled": bool, "message": str, ...}
-    """
     r = requests.get(f"{BASE_URL}/status/maintenance", headers=_headers(), timeout=_timeout)
     r.raise_for_status()
     data = r.json()

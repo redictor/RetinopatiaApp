@@ -9,6 +9,12 @@ import numpy as np
 import datetime
 import cv2
 
+import json
+import random
+import subprocess
+import tempfile
+import datetime
+
 class LineChartWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,13 +35,9 @@ class LineChartWidget(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        # фон
         p.fillRect(self.rect(), QtGui.QColor("#ffffff"))
-
-        # рабочая область (оставляем место слева под цифры 1..5)
         r = self.rect().adjusted(48, 14, -14, -20)
 
-        # если данных мало
         if len(self._values) < 2:
             p.setPen(QtGui.QPen(QtGui.QColor("#888"), 1))
             p.drawText(r, QtCore.Qt.AlignCenter, "Недостаточно данных для графика")
@@ -43,8 +45,6 @@ class LineChartWidget(QtWidgets.QWidget):
 
         vals = self._values
         best = self._best_values if len(self._best_values) == len(vals) else None
-
-        # фикс шкала 1..5
         vmin, vmax = 1.0, 5.0
 
         def y_for(v: float) -> float:
@@ -54,20 +54,17 @@ class LineChartWidget(QtWidgets.QWidget):
         def x_for(i: int) -> float:
             return r.left() + (i / (len(vals) - 1)) * r.width()
 
-        # сетка 5 линий (1..5)
         grid_pen = QtGui.QPen(QtGui.QColor("#e9e9e9"), 1)
         p.setPen(grid_pen)
         for level in range(1, 6):
             y = y_for(level)
             p.drawLine(int(r.left()), int(y), int(r.right()), int(y))
 
-        # подписи 1..5 слева
         p.setPen(QtGui.QPen(QtGui.QColor("#777"), 1))
         for level in range(1, 6):
             y = y_for(level)
             p.drawText(int(r.left()) - 26, int(y) + 5, str(level))
 
-        # сглаженный путь (плавные углы) через quadTo
         def smooth_path(series):
             pts = [QtCore.QPointF(x_for(i), y_for(v)) for i, v in enumerate(series)]
             path = QtGui.QPainterPath(pts[0])
@@ -82,7 +79,6 @@ class LineChartWidget(QtWidgets.QWidget):
             path.quadTo(pts[-2], pts[-1])
             return path
 
-        # основная линия (score)
         p.setPen(QtGui.QPen(QtGui.QColor("#0078D7"), 2))
         p.drawPath(smooth_path(vals))
 
@@ -125,10 +121,9 @@ class MainWindow(QtWidgets.QWidget):
         if not ts_iso or ts_iso == "—":
             return "—"
         try:
-            # ts приходит типа 2026-01-18T12:34:56
             dt = datetime.datetime.fromisoformat(ts_iso.replace("Z", ""))
         except Exception:
-            return ts_iso  # если формат странный — покажем как есть
+            return ts_iso 
 
         now = datetime.datetime.now()
         diff = now - dt
@@ -161,7 +156,6 @@ class MainWindow(QtWidgets.QWidget):
         return f"{years} г назад"
 
     def _refresh_stats_and_home(self):
-        # 1) грузим историю с сервера
         try:
             data = self._stats_load()
         except Exception:
@@ -172,7 +166,6 @@ class MainWindow(QtWidgets.QWidget):
             avg_score = sum(d.get("score", 0) for d in data) / total
             avg_dice = sum(float(d.get("dice", 0.0)) for d in data) / total
 
-            # "эффективность" — по сути средняя оценка в %
             eff = (avg_score / 5.0) * 100.0
 
             last_ts = data[-1].get("ts", "—")
@@ -185,11 +178,8 @@ class MainWindow(QtWidgets.QWidget):
         if hasattr(self, "stats_chart"):
             tail = data[-50:]
             scores = [float(d.get("score", 0)) for d in tail]
+            self.stats_chart.set_series(scores, [])  
 
-            # синяя линия
-            self.stats_chart.set_series(scores, [])  # или просто set_series(scores, None) если у тебя так
-
-            # зелёная цель = округлённая средняя (1..5)
             if scores:
                 avg = sum(scores) / len(scores)
                 target = int(round(avg))
@@ -198,7 +188,6 @@ class MainWindow(QtWidgets.QWidget):
             else:
                 self.stats_chart.set_target_level(None)
 
-        # 2) обновляем главную (если лейблы уже созданы)
         if hasattr(self, "home_total_lbl"):
             self.home_total_lbl.setText(str(total) if total else "—")
         if hasattr(self, "home_eff_lbl"):
@@ -211,7 +200,6 @@ class MainWindow(QtWidgets.QWidget):
         if hasattr(self, "home_last_activity_lbl"):
             self.home_last_activity_lbl.setText(last_ts if total else "—")
 
-        # 3) обновляем страницу статистики (если создали лейблы/таблицу)
         if hasattr(self, "stats_total_lbl"):
             self.stats_total_lbl.setText(str(total) if total else "0")
         if hasattr(self, "stats_avg_score_lbl"):
@@ -238,7 +226,6 @@ class MainWindow(QtWidgets.QWidget):
                 self.stats_table.setItem(r, 5, QtWidgets.QTableWidgetItem(f"{pm:.2f}"))
 
     def _check_maintenance(self):
-        # мониторим только в главном окне
         if self._maint_forced:
             return
 
@@ -249,8 +236,6 @@ class MainWindow(QtWidgets.QWidget):
                 self._maint_timer.stop()
 
                 msg = st.get("message") or "Ведутся технические работы. Доступ временно запрещён."
-
-                # ВАЖНО: после закрытия диалога (ОК или крестик) выкидываем на авторизацию
                 RoundedDialog.warning(
                     "Технические работы",
                     "Сообщение от сервера: " + msg + "\n\nСейчас в приложении ведутся технические работы. В этот момент просмотр контента приложения, его использование или любые другие действия в нём недоступны. Приносим свои извенения, за доставленные неудобства!"
@@ -266,7 +251,6 @@ class MainWindow(QtWidgets.QWidget):
                     self.on_logout()
 
         except Exception:
-            # если сервер недоступен — можешь ничего не делать
             pass
 
     def _build_ui(self):
@@ -374,7 +358,6 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_stats.clicked.connect(lambda: self.set_page(2))
         side_layout.addWidget(self.btn_stats)
 
-
         side_layout.addStretch(1)
 
         line = QtWidgets.QFrame()
@@ -419,7 +402,6 @@ class MainWindow(QtWidgets.QWidget):
         root.addLayout(body)
         QtCore.QTimer.singleShot(0, self._refresh_stats_and_home)
 
-
     def _nav_button_style(self, active: bool) -> str:
         if active:
             return """
@@ -457,7 +439,6 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_settings.setChecked(index == 3)
 
     def _stats_path(self) -> str:
-        # локальный файл рядом с main_window.py
         base = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(base, "training_history.json")
 
@@ -482,7 +463,6 @@ class MainWindow(QtWidgets.QWidget):
             )
         except Exception:
             pass
-
 
     def _page_home(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
@@ -510,7 +490,6 @@ class MainWindow(QtWidgets.QWidget):
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 13px; color: #555;")
         left.addWidget(subtitle)
-
         top.addLayout(left, 1)
 
         avatar = QtWidgets.QLabel()
@@ -611,8 +590,6 @@ class MainWindow(QtWidgets.QWidget):
         cards.addWidget(c1)
         cards.addWidget(c2)
         cards.addWidget(c3)
-
-
         l.addLayout(cards)
 
         actions_title = QtWidgets.QLabel("Быстрые действия")
@@ -776,10 +753,8 @@ class MainWindow(QtWidgets.QWidget):
         title = QtWidgets.QLabel("Статистика")
         title.setStyleSheet("font-size: 22px; font-weight: 800; color: #222;")
         l.addWidget(title)
-
         data = self._stats_load()
 
-        # summary cards
         cards = QtWidgets.QHBoxLayout()
         cards.setSpacing(14)
 
@@ -825,9 +800,7 @@ class MainWindow(QtWidgets.QWidget):
         cards.addWidget(c2)
         cards.addWidget(c3)
         l.addLayout(cards)
-
-        # table history
-        # chart history
+        
         box = QtWidgets.QFrame()
         box.setStyleSheet("QFrame{background:#fff;border:none;border-radius:16px;}")
         bl = QtWidgets.QVBoxLayout(box)
@@ -865,16 +838,6 @@ class MainWindow(QtWidgets.QWidget):
 
 
     def _page_training(self) -> QtWidgets.QWidget:
-        import os
-        import sys
-        import json
-        import random
-        import subprocess
-        import tempfile
-        import datetime
-
-        from ui_dialogs import RoundedDialog
-
         STAGE_NAMES = [
             "0 стадия - Нет ретинопатии",
             "1 стадия - Начальная",
@@ -1194,9 +1157,6 @@ class MainWindow(QtWidgets.QWidget):
 
                 self._worker = None
                 self._dlg = None
-
-                # этапы
-                # 0 = до старта, 1 = разметка+стадия, 2 = подтверждение фокуса, 3 = результат
                 self.step = 0
 
                 self._build()
@@ -1205,9 +1165,7 @@ class MainWindow(QtWidgets.QWidget):
             def _select_stage(self, stage: int):
                 if stage < 0 or stage > 4:
                     return
-
                 self.stage_combo.setCurrentIndex(stage)
-                self.selected_stage = stage
 
             def _build(self):
                 self.setStyleSheet("""
@@ -1269,10 +1227,8 @@ class MainWindow(QtWidgets.QWidget):
 
                 self.canvas = PaintCanvas()
                 ll.addWidget(self.canvas, 1)
-
                 grid.addWidget(left, 1)
 
-                # right card (controls)
                 right = QtWidgets.QFrame()
                 right.setFixedWidth(420)
                 right.setStyleSheet("QFrame{background:#fff;border:1px solid #e6e6e6;border-radius:16px;}")
@@ -1284,20 +1240,17 @@ class MainWindow(QtWidgets.QWidget):
                 head.setStyleSheet("QLabel{font-size:14px;font-weight:900;border:none;background:transparent;}")
                 rl.addWidget(head)
 
-                # --- кнопка старт ---
                 self.btn_start = QtWidgets.QPushButton("Начать тренировку")
                 self.btn_start.setFixedHeight(46)
                 self.btn_start.clicked.connect(self._start_training)
                 rl.addWidget(self.btn_start)
 
-                # блок управления (скрыт до старта)
                 self.controls_box = QtWidgets.QFrame()
                 self.controls_box.setStyleSheet("QFrame{background:#ffffff;border:1px solid #eeeeee;border-radius:14px;}")
                 cb = QtWidgets.QVBoxLayout(self.controls_box)
                 cb.setContentsMargins(12, 12, 12, 12)
                 cb.setSpacing(10)
 
-                # инструменты
                 tools = QtWidgets.QHBoxLayout()
                 tools.setSpacing(10)
 
@@ -1349,10 +1302,8 @@ class MainWindow(QtWidgets.QWidget):
                 self.btn_ai.setFixedHeight(46)
                 self.btn_ai.clicked.connect(self._run_ai_async)
                 cb.addWidget(self.btn_ai)
-
                 rl.addWidget(self.controls_box)
 
-                # результат карточкой (скрыт пока нет результата)
                 self.result_frame = QtWidgets.QFrame()
                 self.result_frame.setStyleSheet("""
                     QFrame { background:#f7fbff; border:1px solid #d6e7ff; border-radius:14px; }
@@ -1399,7 +1350,6 @@ class MainWindow(QtWidgets.QWidget):
                 self._kill_text_frames(self)
 
             def _kill_text_frames(self, root: QtWidgets.QWidget):
-                # убираем именно рамки/фокус у текста, но НЕ трогаем QFrame карточки
                 for lab in root.findChildren(QtWidgets.QLabel):
                     lab.setFrameShape(QtWidgets.QFrame.NoFrame)
                     lab.setLineWidth(0)
@@ -1437,7 +1387,7 @@ class MainWindow(QtWidgets.QWidget):
                     self.step_hint.setText("Этап 3/4. Подтвердите выполненную разметку, нажав на кнопку \"Проверить результат\"")
                     self.controls_box.setVisible(True)
                     self.result_frame.setVisible(False)
-                    self.canvas.set_paint_enabled(False)  # блокируем рисование на этапе проверки
+                    self.canvas.set_paint_enabled(False) 
                     self.btn_confirm_focus.setEnabled(False)
                     self.btn_ai.setEnabled(True)
                 else:
@@ -1482,28 +1432,23 @@ class MainWindow(QtWidgets.QWidget):
                 self.image_path = imgp
                 self.canvas.set_image(rgb)
 
-                # очистим результат
                 self.result_frame.setVisible(False)
                 self.ai_out.setText("")
                 self.result_hint.setText("")
                 self.score_badge.setText("—/5")
 
-                # --- вернуть управление кистью при новом старте ---
                 self.chk_paint.setEnabled(True)
                 self.chk_eraser.setEnabled(True)
                 self.brush_slider.setEnabled(True)
 
-                # по умолчанию: рисование включено, ластик выключен
                 self.chk_paint.setChecked(True)
                 self.chk_eraser.setChecked(False)
                 self.canvas.set_eraser(False)
                 self.canvas.set_paint_enabled(True)
 
-                # кнопки этапов тоже вернуть
                 self.btn_confirm_focus.setEnabled(True)
                 self.btn_ai.setEnabled(False)
 
-                # этап 2
                 self._set_step(1)
 
             def _confirm_focus(self):
@@ -1529,17 +1474,14 @@ class MainWindow(QtWidgets.QWidget):
                     RoundedDialog.warning("Ошибка", "Сначала начните тренировку.")
                     return
 
-                # проверка: фокус должен быть подтверждён
                 if self.step < 2:
                     RoundedDialog.warning("Сначала подтвердите фокус", "Нажмите «Далее: подтвердить фокус» перед запуском ИИ.")
                     return
 
                 self._dlg = LoadingDialog(self, "ИИ анализирует снимок и сравнивает с вашим фокусом…")
                 self._dlg.show()
-
                 out_png = os.path.join(tempfile.gettempdir(), "retino_heatmap.png")
 
-                # блокируем элементы на время анализа
                 self.btn_ai.setEnabled(False)
                 self.stage_combo.setEnabled(False)
                 self.chk_paint.setEnabled(False)
@@ -1560,17 +1502,13 @@ class MainWindow(QtWidgets.QWidget):
                     heat_u8 = cv2.imdecode(np.fromfile(out_png, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
                     if heat_u8 is None:
                         raise RuntimeError("Не удалось прочитать heatmap.png")
-
                     heat = heat_u8.astype(np.float32) / 255.0
 
-                    # пользов. маска -> 224
                     um = (self.canvas.user_mask > 0).astype(np.uint8)
                     um_224 = cv2.resize(um, (224, 224), interpolation=cv2.INTER_NEAREST).astype(bool)
-
-                    # маска ИИ
                     am_224 = _ai_mask_from_heatmap(heat, top_frac=0.30)
 
-                    sim = _dice(um_224, am_224)          # 0..1
+                    sim = _dice(um_224, am_224)        
                     area_score = _score_1to5_from_similarity(sim)
 
                     user_stage = self.stage_combo.currentIndex()
@@ -1583,7 +1521,6 @@ class MainWindow(QtWidgets.QWidget):
                     final_score = int(round(w_stage * stage_score + w_area * area_score))
                     final_score = max(1, min(5, final_score))
 
-                    # сохранить в статистику
                     try:
                         self._mw._stats_append({
                             "user_stage": int(user_stage),
@@ -1595,10 +1532,8 @@ class MainWindow(QtWidgets.QWidget):
                     except Exception:
                         pass
 
-                    # показать теплокарту на канвасе (уже после результата — можно включить)
                     self.canvas.set_ai_heat(heat, alpha_cam=0.33)
 
-                    # профессиональный текст
                     ai_txt = STAGE_NAMES[ai_stage]
                     user_txt = STAGE_NAMES[user_stage]
 
@@ -1616,7 +1551,6 @@ class MainWindow(QtWidgets.QWidget):
                     self.score_badge.setText(f"{final_score}/5")
                     self.result_frame.setVisible(True)
 
-                    # этап 4 — блокируем рисование и даём варианты
                     self._set_step(3)
 
                 except Exception as e:
@@ -1646,10 +1580,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._dlg.close()
                     self._dlg = None
 
-                # разблокируем базовое управление
                 self.stage_combo.setEnabled(True)
-
-                # но рисование уже запрещено (после анализа), пока не нажмут “Заново”
                 self.chk_paint.setEnabled(False)
                 self.chk_eraser.setEnabled(False)
                 self.brush_slider.setEnabled(False)
@@ -1742,8 +1673,8 @@ class MainWindow(QtWidgets.QWidget):
         verified_text = QtWidgets.QLabel("Аккаунт верифицирован")
         verified_text.setStyleSheet("font-size: 13px; color: #16a34a; font-weight: 700;")
 
-        self.settings_verify_icon = check          # QLabel / кружок / галка
-        self.settings_verified_text = verified_text # QLabel с текстом статуса
+        self.settings_verify_icon = check         
+        self.settings_verified_text = verified_text
         
         info_lbl = QtWidgets.QLabel("(❔)")
         info_lbl.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
@@ -1881,7 +1812,7 @@ class MainWindow(QtWidgets.QWidget):
 
         dlg.set_confirm_text("Сбросить")
         dlg.set_cancel_text("Отмена")
-        dlg.set_danger(True)  # если есть красный режим
+        dlg.set_danger(True) 
 
         if dlg.exec_() != dlg.Accepted:
             return
@@ -1925,7 +1856,7 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         try:
-            logout()  # сброс токена
+            logout()  
         except Exception:
             pass
 

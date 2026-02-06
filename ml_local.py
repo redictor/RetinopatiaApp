@@ -1,16 +1,12 @@
 import os
 import numpy as np
 import cv2
-
 import onnxruntime as ort
-
 import torch
 import timm
 import torch.nn.functional as F
 
-
-STAGE_NAMES = ["0", "1", "2", "3", "4"]  # можешь заменить на "No DR", "Mild", ...
-
+STAGE_NAMES = ["0", "1", "2", "3", "4"] 
 
 def _softmax(x: np.ndarray) -> np.ndarray:
     x = x - np.max(x)
@@ -30,19 +26,13 @@ class LocalRetinaModel:
         if not os.path.exists(pt_path):
             raise FileNotFoundError(f"Не найден {pt_path}")
 
-        # ONNX (stage)
         self.ort_sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-
-        # PyTorch (Grad-CAM)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.torch_model = timm.create_model("tf_efficientnet_b0", pretrained=False, num_classes=5)
         sd = torch.load(pt_path, map_location="cpu")
         self.torch_model.load_state_dict(sd)
         self.torch_model.eval().to(self.device)
-
-        # target layer for Grad-CAM
         self._target_layer = self.torch_model.conv_head
-
         self._act = None
         self._grad = None
         self._hooks_set = False
@@ -68,7 +58,7 @@ class LocalRetinaModel:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
         img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))[None, ...]  # 1x3xHxW
+        img = np.transpose(img, (2, 0, 1))[None, ...] 
         return img
 
     def _preprocess_torch(self, image_path: str, size=224) -> torch.Tensor:
@@ -77,7 +67,7 @@ class LocalRetinaModel:
 
     def predict_stage(self, image_path: str):
         x = self._preprocess_np(image_path, 224)
-        logits = self.ort_sess.run(None, {"image": x})[0][0]  # (5,)
+        logits = self.ort_sess.run(None, {"image": x})[0][0] 
         probs = _softmax(logits)
         stage_id = int(np.argmax(probs))
         return stage_id, probs
@@ -96,19 +86,15 @@ class LocalRetinaModel:
         self.torch_model.zero_grad(set_to_none=True)
         score.backward()
 
-        # Grad-CAM
-        w = self._grad.mean(dim=(2, 3), keepdim=True)           # 1xCx1x1
-        cam = (w * self._act).sum(dim=1, keepdim=True)          # 1x1xhxw
+        w = self._grad.mean(dim=(2, 3), keepdim=True)        
+        cam = (w * self._act).sum(dim=1, keepdim=True)      
         cam = F.relu(cam)
         cam = F.interpolate(cam, size=(224, 224), mode="bilinear", align_corners=False)
         cam = cam[0, 0].detach().cpu().numpy()
         cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-6)
         return cam
 
-
-# удобная “глобальная” модель (лениво грузим)
 _model: LocalRetinaModel | None = None
-
 def get_model() -> LocalRetinaModel:
     global _model
     if _model is None:

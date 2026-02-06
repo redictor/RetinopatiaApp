@@ -17,11 +17,10 @@ def preprocess(image_path: str, size=224):
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     rgb = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_AREA)
     x = rgb.astype(np.float32) / 255.0
-    x = np.transpose(x, (2, 0, 1))[None, ...]  # 1x3xHxW
+    x = np.transpose(x, (2, 0, 1))[None, ...] 
     return x
 
 def main():
-    # args: image_path output_heatmap_png
     if len(sys.argv) < 3:
         print("Usage: python infer_torch.py <image_path> <out_heatmap_png>", file=sys.stderr)
         sys.exit(2)
@@ -29,7 +28,6 @@ def main():
     image_path = sys.argv[1]
     out_png = sys.argv[2]
 
-    # эти env можно оставить — в отдельном процессе они не мешают
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
@@ -49,7 +47,6 @@ def main():
     model.load_state_dict(sd)
     model.eval().to(device)
 
-    # hooks for Grad-CAM
     target_layer = model.conv_head
     act = None
     grad = None
@@ -84,11 +81,9 @@ def main():
     cam = cam[0, 0].detach().cpu().numpy()
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-6)
 
-    # save heatmap as grayscale png
     heat_u8 = (cam * 255).astype(np.uint8)
     cv2.imencode(".png", heat_u8)[1].tofile(out_png)
 
-    # print json result to stdout
     print(json.dumps({
         "stage_id": stage_id,
         "p_max": float(np.max(probs)),
