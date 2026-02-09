@@ -1,65 +1,124 @@
 <p align="center">
-  <h1 align="center">RetinopatiaApp</h1>
-  <p align="center">Educational AI-based app for training diabetic retinopathy staging using fundus photos</p>
+  <table align="center">
+    <tr>
+      <td width="25%" align="right">
+        <img src="assets/logo.png" width="48" alt="Left icon">
+      </td>
+      <td width="50%" align="center">
+        <span style="font-size: 42px; font-weight: 800;">RetinopatiaApp</span>
+      </td>
+      <td width="25%" align="left">
+        <img src="assets/logo.png" width="48" alt="Right icon">
+      </td>
+    </tr>
+  </table>
 </p>
 
-<p align="center">
+<p align="center">  
   <a href="https://github.com/redictor/RetinopatiaApp/commits/main">
-    <img src="https://img.shields.io/github/commit-activity/t/redictor/RetinopatiaApp?style=for-the-badge&labelColor=1a202c&color=2d3748&label=COMMITS" alt="Commits">
-  </a>
+    <img src="https://img.shields.io/github/commit-activity/t/redictor/RetinopatiaApp?style=for-the-badge&color=0078D7">
+  </a>  
   <a href="https://github.com/redictor/RetinopatiaApp/stargazers">
-    <img src="https://img.shields.io/github/stars/redictor/RetinopatiaApp?style=for-the-badge&labelColor=1a202c&color=2d3748&label=STARS" alt="Stars">
-  </a>
-  <a href="https://github.com/redictor/RetinopatiaApp/graphs/contributors">
-    <img src="https://img.shields.io/github/contributors/redictor/RetinopatiaApp?style=for-the-badge&labelColor=1a202c&color=2d3748&label=CONTRIBUTORS" alt="Contributors">
-  </a>
-  <a href="https://www.python.org/">
-    <img src="https://img.shields.io/badge/PYTHON-3776AB?style=for-the-badge&labelColor=1a202c&color=3776AB&logo=python&logoColor=white" alt="Python">
-  </a>
+    <img src="https://img.shields.io/github/stars/redictor/RetinopatiaApp?style=for-the-badge&color=0078D7">
+  </a>  
+  <a href="https://github.com/redictor/RetinopatiaApp/issues">
+    <img src="https://img.shields.io/github/issues/redictor/RetinopatiaApp?style=for-the-badge&color=0078D7">
+  </a>  
+  <img src="https://img.shields.io/badge/Python-3.11+-blue?style=for-the-badge">  
+</p>  
+
+---  
+
+## Introduction
+
+RetinopatiaApp is a desktop educational application designed for training and
+self-assessment of skills in recognizing diabetic retinopathy
+from retinal fundus images.
+
+The project combines interactive image annotation, user attention analysis,
+and neural network–based evaluation to help users better understand
+visual patterns associated with different stages of the disease.
+
+---
+
+## Features
+
+### AI Analysis
+- [x] Automatic classification of diabetic retinopathy stages
+- [x] Grad-CAM attention visualization
+- [x] Comparison between user attention and model attention
+- [x] Dice coefficient calculation
+- [x] Final performance score
+
+### Interactive Training
+- [x] Manual attention area annotation
+- [x] Brush and eraser tools with adjustable size
+- [x] Step-by-step training workflow
+- [x] Randomized image sampling
+
+### Statistics & Progress
+- [x] Training history
+- [x] Knowledge quality score (QWS)
+- [x] Attention similarity metric (AIS)
+- [x] Progress tracking over time
+- [x] Last activity monitoring
+
+### Account Management
+- [x] User registration and authentication
+- [x] Password change
+- [x] Logout
+- [x] Account deletion with confirmation
+- [x] Server maintenance mode handling
+
+### User Interface
+- [x] Modern PyQt5-based GUI
+- [x] Custom rounded dialogs
+- [x] Frameless draggable windows
+- [x] Unified visual style
+- [x] Fully asynchronous server requests
+
+---
+
+## Technical Stack
+
+### Core Technologies
+- [x] Python 3.11+
+- [x] PyQt5
+- [x] PyTorch
+- [x] ONNX Runtime
+- [x] NumPy
+
+---
+
+## Roadmap
+
+- [ ] Offline mode without server dependency
+- [ ] Extended statistics and analytics
+- [ ] Export of training results
+- [ ] Additional datasets support
+- [ ] Improved attention visualization
+- [ ] GPU-accelerated inference
+- [ ] UX and performance improvements
+
+---
+
+## Project Status
+
+The project is under active development. \
+Core functionality is implemented, while UI, performance, and training scenarios continue to evolve.
+
+---
+
+## License
+
+This project is licensed under the **MIT License**.
+
+---
+
+## Support
+
+If you find this project useful, consider supporting it by: starring the repository, reporting issues, suggesting improvements, contributing to development.
+
+<p align="center" style="color:#777; font-size:13px;">
+  © 2026 · Created by redictor
 </p>
-
----
-
-## 🌟 Overview
-
-RetinopatiaApp is an educational application powered by artificial intelligence, created to help medical students and ophthalmology specialists practice diabetic retinopathy staging using fundus images.
-
-The project focuses on interactive learning with clear visual feedback, including model explainability to support better understanding of diagnostic features.
-
-## 🚀 Features
-
-### Core Functionality
-- **Interactive Training** - Practice staging diabetic retinopathy using medical images
-- **AI-Based Classification** - Neural network predicts disease stage from fundus photos
-- **Model Explainability (Grad-CAM)** - Highlights image regions that influenced the decision
-- **User vs Model Comparison** - Helps identify mistakes and learn from feedback
-
-### Learning Experience
-- **Step-by-step workflow** - Mimics a real diagnostic process
-- **Progress tracking** - Training history and statistics
-- **Self-paced learning** - Useful for independent practice and reinforcement
-
-### Educational Use
-- **Safe training environment** - Educational purpose only
-- **Scalable concept** - Can be extended with new datasets or additional conditions
-
-## 🛠 Current Status
-
-**Educational Prototype** - Core functionality implemented for demonstration and training purposes. The project can be expanded and improved.
-
-## 📖 Documentation
-
-Documentation and project details are provided in this repository (slides, report, and workflow description).  
-If you plan to extend the project, feel free to open an issue or propose improvements.
-
-## 🤝 Contribution
-
-Contributions are welcome: ideas, improvements, bug reports, and feature suggestions.
-
----
-
-<div align="center">
-
-*Created by redictor, 2026*
-
-</div>

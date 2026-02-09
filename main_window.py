@@ -5,6 +5,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import delete_user_soft, logout, get_maintenance_status, get_updates, save_training_record, get_training_history, reset_training_history
 from ui_dialogs import DeleteAccountDialog, RoundedDialog
+from ui_dialogs import ApiWorker
 import numpy as np
 import datetime
 import cv2
@@ -112,9 +113,10 @@ class MainWindow(QtWidgets.QWidget):
 
         self._stats_timer = QtCore.QTimer(self)
         self._stats_timer.timeout.connect(self._refresh_stats_and_home)
-        self._stats_timer.start(20000)  # 20 секунд
+        self._stats_timer.start(20000) 
 
         self._account_status = {"is_verified": False, "email": None}
+        self._updates_layout = None
     
     def _ru_plural(self, n: int, one: str, few: str, many: str) -> str:
         n = abs(int(n))
@@ -155,102 +157,41 @@ class MainWindow(QtWidgets.QWidget):
         return f"{days} {self._ru_plural(days, 'день', 'дня', 'дней')} назад"
 
     def _refresh_stats_and_home(self):
-        try:
-            data = self._stats_load()
-        except Exception:
-            data = []
+        w = ApiWorker(get_training_history, 2000)
+        w.ok.connect(self._apply_stats_data)
+        w.fail.connect(lambda _: self._apply_stats_data([]))
+        w.finished.connect(w.deleteLater)
+        w.start()
+        self._stats_worker = w
 
-        total = len(data)
-        if total:
-            avg_score = sum(d.get("score", 0) for d in data) / total
-            avg_dice = sum(float(d.get("dice", 0.0)) for d in data) / total
-
-            eff = (avg_score / 5.0) * 100.0
-
-            last_ts = data[-1].get("ts", "—")
-        else:
-            avg_score = 0.0
-            avg_dice = 0.0
-            eff = 0.0
-            last_ts = "—"
-        
-        if hasattr(self, "stats_chart"):
-            tail = data[-50:]
-            scores = [float(d.get("score", 0)) for d in tail]
-            self.stats_chart.set_series(scores, [])  
-
-            if scores:
-                avg = sum(scores) / len(scores)
-                target = int(round(avg))
-                target = max(1, min(5, target))
-                self.stats_chart.set_target_level(target)
-            else:
-                self.stats_chart.set_target_level(None)
-
-        if hasattr(self, "home_total_lbl"):
-            self.home_total_lbl.setText(str(total) if total else "—")
-        if hasattr(self, "home_eff_lbl"):
-            self.home_eff_lbl.setText(f"{eff:.0f}%" if total else "—%")
-        if not data:
-            last_ts_raw = None
-        else:
-            last_ts_raw = data[-1].get("ts")
-        last_ts = self._format_ago(last_ts_raw)
-        if hasattr(self, "home_last_activity_lbl"):
-            self.home_last_activity_lbl.setText(last_ts if total else "—")
-
-        if hasattr(self, "stats_total_lbl"):
-            self.stats_total_lbl.setText(str(total) if total else "0")
-        if hasattr(self, "stats_avg_score_lbl"):
-            self.stats_avg_score_lbl.setText(f"{avg_score:.2f}/5" if total else "—/5")
-        if hasattr(self, "stats_avg_dice_lbl"):
-            self.stats_avg_dice_lbl.setText(f"{avg_dice:.2f}" if total else "—")
-
-        if hasattr(self, "stats_table"):
-            tail = data[-50:]
-            self.stats_table.setRowCount(len(tail))
-            for r, d in enumerate(tail):
-                ts = d.get("ts", "—")
-                us = int(d.get("user_stage", 0))
-                ai = int(d.get("ai_stage", 0))
-                sc = int(d.get("score", 0))
-                dc = float(d.get("dice", 0.0))
-                pm = float(d.get("p_max", 0.0))
-
-                self.stats_table.setItem(r, 0, QtWidgets.QTableWidgetItem(ts))
-                self.stats_table.setItem(r, 1, QtWidgets.QTableWidgetItem(str(us)))
-                self.stats_table.setItem(r, 2, QtWidgets.QTableWidgetItem(str(ai)))
-                self.stats_table.setItem(r, 3, QtWidgets.QTableWidgetItem(f"{sc}/5"))
-                self.stats_table.setItem(r, 4, QtWidgets.QTableWidgetItem(f"{dc:.2f}"))
-                self.stats_table.setItem(r, 5, QtWidgets.QTableWidgetItem(f"{pm:.2f}"))
+    def _on_maint_ok(self, st: dict):
+        if st.get("enabled"):
+            self._maint_forced = True
+            self._maint_timer.stop()
+            msg = st.get("message") or "Ведутся технические работы. Доступ временно запрещён."
+            RoundedDialog.warning("Технические работы", "Сообщение от сервера: " + msg + "\n\n...")
+            try:
+                logout()
+            except Exception:
+                pass
+            self.close()
+            if self.on_logout:
+                self.on_logout()
 
     def _check_maintenance(self):
         if self._maint_forced:
             return
 
-        try:
-            st = get_maintenance_status()
-            if st.get("enabled"):
-                self._maint_forced = True
-                self._maint_timer.stop()
+        from api_client import get_maintenance_status
+        from ui_dialogs import ApiWorker  # куда положишь класс
 
-                msg = st.get("message") or "Ведутся технические работы. Доступ временно запрещён."
-                RoundedDialog.warning(
-                    "Технические работы",
-                    "Сообщение от сервера: " + msg + "\n\nСейчас в приложении ведутся технические работы. В этот момент просмотр контента приложения, его использование или любые другие действия в нём недоступны. Приносим свои извенения, за доставленные неудобства!"
-                )
+        w = ApiWorker(get_maintenance_status)
+        w.ok.connect(self._on_maint_ok)
+        w.fail.connect(lambda _: None)
+        w.finished.connect(w.deleteLater)
+        w.start()
 
-                try:
-                    logout()
-                except Exception:
-                    pass
-
-                self.close()
-                if self.on_logout:
-                    self.on_logout()
-
-        except Exception:
-            pass
+        self._maint_worker = w  
 
     def _build_ui(self):
         wrapper = QtWidgets.QWidget(self)
@@ -746,31 +687,18 @@ class MainWindow(QtWidgets.QWidget):
         il.setContentsMargins(0, 0, 0, 0)
         il.setSpacing(4)
 
-        try:
-            updates_raw = get_updates()
-            updates_raw.sort(key=lambda u: u.get("id", 0), reverse=True)
-            updates_data = [(u["version"], u["body"]) for u in updates_raw]
+        self._updates_layout = il
 
-        except Exception:
-            updates_data = [("offline", "Не удалось загрузить обновления с сервера.")]
+        loading = QtWidgets.QLabel("Загрузка обновлений…")
+        loading.setStyleSheet("QLabel { font-size: 12px; color: #777; padding: 10px; }")
+        il.addWidget(loading)
 
-        for t, d in updates_data:
-            item = QtWidgets.QFrame()
-            item.setStyleSheet("QFrame { background-color: transparent; border: none; }")
-            it = QtWidgets.QVBoxLayout(item)
-            it.setContentsMargins(12, 10, 12, 10)
-            it.setSpacing(4)
-
-            tt = QtWidgets.QLabel(t)
-            tt.setStyleSheet("QLabel { font-size: 13px; font-weight: 900; color: #222; }")
-
-            dd = QtWidgets.QLabel(d)
-            dd.setWordWrap(True)
-            dd.setStyleSheet("QLabel { font-size: 12px; color: #666; }")
-
-            it.addWidget(tt)
-            it.addWidget(dd)
-            il.addWidget(item)
+        w = ApiWorker(get_updates)
+        w.ok.connect(self._apply_updates_home)
+        w.fail.connect(lambda _: self._apply_updates_home([]))
+        w.finished.connect(w.deleteLater)
+        w.start()
+        self._updates_worker = w
 
         il.addStretch(1)
         scroll.setWidget(inner)

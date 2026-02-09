@@ -176,8 +176,9 @@ class ConfirmDialog(QtWidgets.QDialog):
         outer.setObjectName("outer")
         outer.setStyleSheet("""
             QFrame#outer {
-                background-color: #ffffff;
+                background-color: #F0F0F0;  
                 border-radius: 18px;
+                border: 1px solid #D6D6D6;
             }
         """)
 
@@ -207,11 +208,17 @@ class ConfirmDialog(QtWidgets.QDialog):
         icon.mouseReleaseEvent = self._header_mouse_release
 
         if danger:
-            icon.setStyleSheet("background-color: #FF4444; color: white; border-radius: 17px; font-weight: 900;")
-            icon.setText("!")
+            icon.setStyleSheet(
+                "background-color: #FF4444; border-radius: 17px;"
+            )
+            pm = QtGui.QPixmap("assets/icons/warning.png")
         else:
-            icon.setStyleSheet("background-color: #0078D7; color: white; border-radius: 17px; font-weight: 900;")
-            icon.setText("?")
+            icon.setStyleSheet(
+                "background-color: #0078D7; border-radius: 17px;"
+            )
+            pm = QtGui.QPixmap("assets/icons/info.png")
+        
+        icon.setPixmap(pm.scaled(20, 20, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
 
         title_lbl = QtWidgets.QLabel(title)
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #222;")
@@ -334,8 +341,9 @@ class DeleteAccountDialog(QtWidgets.QDialog):
         self.card.setFixedSize(560, 420)
         self.card.setStyleSheet("""
             QFrame {
-                background-color: #ffffff;
+                background-color: #F0F0F0;  
                 border-radius: 18px;
+                border: 1px solid #D6D6D6;
             }
         """)
 
@@ -354,8 +362,30 @@ class DeleteAccountDialog(QtWidgets.QDialog):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(8)
 
+        icon = QtWidgets.QLabel()
+        icon.setFixedSize(34, 34)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+        icon.setStyleSheet(
+            "background-color: #FF4444; border-radius: 17px;"
+        )
+
+        pixmap = QtGui.QPixmap("assets/icons/delAcc.png")
+        icon.setPixmap(
+            pixmap.scaled(
+                20, 20,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation
+            )
+        )
+
+        icon.mousePressEvent = self._header_mouse_press
+        icon.mouseMoveEvent = self._header_mouse_move
+        icon.mouseReleaseEvent = self._header_mouse_release
+
+        top.addWidget(icon)
+
         title = QtWidgets.QLabel("Удаление аккаунта")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #222;")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #222; border: none;")
         title.mousePressEvent = self._header_mouse_press
         title.mouseMoveEvent = self._header_mouse_move
         title.mouseReleaseEvent = self._header_mouse_release
@@ -388,7 +418,7 @@ class DeleteAccountDialog(QtWidgets.QDialog):
             "В последствии восстановление аккаунта невозможно!\n"
         )
         warn.setWordWrap(True)
-        warn.setStyleSheet("font-size: 13px; color: #444;")
+        warn.setStyleSheet("font-size: 13px; color: #444; border: none;")
         layout.addWidget(warn)
 
         self.user_input = QtWidgets.QLineEdit()
@@ -509,8 +539,9 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         self.card.setFixedSize(520, 360)
         self.card.setStyleSheet("""
             QFrame {
-                background-color: #ffffff;
+                background-color: #F0F0F0;  
                 border-radius: 18px;
+                border: 1px solid #D6D6D6;
             }
         """)
 
@@ -528,8 +559,30 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(8)
 
+        icon = QtWidgets.QLabel()
+        icon.setFixedSize(34, 34)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+        icon.setStyleSheet(
+            "background-color: #0078D7; border-radius: 17px;"
+        )
+
+        pixmap = QtGui.QPixmap("assets/icons/resetPass.png")
+        icon.setPixmap(
+            pixmap.scaled(
+                20, 20,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation
+            )
+        )
+
+        icon.mousePressEvent = self._header_mouse_press
+        icon.mouseMoveEvent = self._header_mouse_move
+        icon.mouseReleaseEvent = self._header_mouse_release
+
+        top.addWidget(icon)
+
         title = QtWidgets.QLabel("Смена пароля")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #222;")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #222; border: none;")
         title.mousePressEvent = self._header_mouse_press
         title.mouseMoveEvent = self._header_mouse_move
         title.mouseReleaseEvent = self._header_mouse_release
@@ -556,7 +609,7 @@ class ChangePasswordDialog(QtWidgets.QDialog):
 
         hint = QtWidgets.QLabel("Введите текущий пароль и задайте новый.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("font-size: 12px; color: #666;")
+        hint.setStyleSheet("font-size: 12px; color: #666; border: none;")
         layout.addWidget(hint)
 
         self.old_input = QtWidgets.QLineEdit()
@@ -675,3 +728,20 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         if parent is not None:
             d.setFixedSize(parent.size())
         return d.exec_() == QtWidgets.QDialog.Accepted
+    
+class ApiWorker(QtCore.QThread):
+    ok = QtCore.pyqtSignal(object)      # результат
+    fail = QtCore.pyqtSignal(str)       # ошибка
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self._fn = fn
+        self._args = args
+        self._kwargs = kwargs
+
+    def run(self):
+        try:
+            res = self._fn(*self._args, **self._kwargs)
+            self.ok.emit(res)
+        except Exception as e:
+            self.fail.emit(str(e))
