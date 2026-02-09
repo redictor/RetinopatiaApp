@@ -1,18 +1,12 @@
 <p align="center">
-  <table align="center">
-    <tr>
-      <td width="25%" align="right">
-        <img src="assets/logo.png" width="48" alt="Left icon">
-      </td>
-      <td width="50%" align="center">
-        <span style="font-size: 42px; font-weight: 800;">RetinopatiaApp</span>
-      </td>
-      <td width="25%" align="left">
-        <img src="assets/logo.png" width="48" alt="Right icon">
-      </td>
-    </tr>
-  </table>
+  <img src="assets/logo.png" width="100" alt="RetinopatiaApp logo">
 </p>
+
+<h1 align="center">
+  <span style="font-size:56px; font-weight:900;">
+    RetinopatiaApp
+  </span>
+</h1>
 
 <p align="center">  
   <a href="https://github.com/redictor/RetinopatiaApp/commits/main">
