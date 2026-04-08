@@ -1,3 +1,4 @@
+
 from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import authenticate_user
 from api_client import get_maintenance_status
@@ -70,6 +71,7 @@ class LoginWindow(QtWidgets.QWidget):
                     font-weight: 900;
                 }
             """)
+
 
         app_label = QtWidgets.QLabel("RetinopatiaApp")
         app_label.setStyleSheet("""
