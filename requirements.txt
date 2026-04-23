@@ -5,4 +5,3 @@ opencv-python>=4.8
 torch>=2.0
 torchvision>=0.15
 timm>=0.9
-onnxruntime>=1.15

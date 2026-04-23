@@ -152,3 +152,19 @@ def reset_training_history() -> bool:
         timeout=_timeout,
     )
     return r.status_code == 200
+
+def ai_predict(image_path: str) -> Dict[str, Any]:
+    with open(image_path, "rb") as f:
+        files = {"file": f}
+        headers = {}
+        if _token:
+            headers["Authorization"] = f"Bearer {_token}"
+
+        r = requests.post(
+            f"{BASE_URL}/ai/predict",
+            files=files,
+            headers=headers,
+            timeout=60,
+        )
+    r.raise_for_status()
+    return r.json()

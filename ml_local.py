@@ -1,10 +1,11 @@
 import os
 import numpy as np
 import cv2
-import onnxruntime as ort
+import requests
 import torch
 import timm
 import torch.nn.functional as F
+from api_client import ai_predict
 
 STAGE_NAMES = ["0", "1", "2", "3", "4"] 
 
@@ -18,15 +19,11 @@ class LocalRetinaModel:
     def __init__(self, models_dir: str = "models"):
         self.models_dir = models_dir
 
-        onnx_path = os.path.join(models_dir, "dr_stage.onnx")
         pt_path = os.path.join(models_dir, "best_cls.pt")
 
-        if not os.path.exists(onnx_path):
-            raise FileNotFoundError(f"Не найден {onnx_path}")
         if not os.path.exists(pt_path):
             raise FileNotFoundError(f"Не найден {pt_path}")
 
-        self.ort_sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.torch_model = timm.create_model("tf_efficientnet_b0", pretrained=False, num_classes=5)
         sd = torch.load(pt_path, map_location="cpu")
@@ -66,10 +63,9 @@ class LocalRetinaModel:
         return torch.from_numpy(x)
 
     def predict_stage(self, image_path: str):
-        x = self._preprocess_np(image_path, 224)
-        logits = self.ort_sess.run(None, {"image": x})[0][0] 
-        probs = _softmax(logits)
-        stage_id = int(np.argmax(probs))
+        data = ai_predict(image_path)
+        stage_id = int(data["stage_id"])
+        probs = np.array(data["probs"], dtype=np.float32)
         return stage_id, probs
 
     def gradcam_heatmap(self, image_path: str, class_idx: int | None = None) -> np.ndarray:
