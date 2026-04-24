@@ -3,11 +3,10 @@ import sys
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 from PyQt5 import QtWidgets, QtCore, QtGui
-from api_client import delete_user_soft, logout, get_maintenance_status, get_updates, save_training_record, get_training_history, reset_training_history
+from api_client import delete_user_soft, logout, get_maintenance_status, get_updates, save_training_record, get_training_history, reset_training_history, get_profile
 from ui_dialogs import DeleteAccountDialog, RoundedDialog
 from ui_dialogs import ApiWorker
 import numpy as np
-import datetime
 import cv2
 import json
 import random
@@ -15,17 +14,27 @@ import subprocess
 import tempfile
 import datetime
 from main import current_v
+
 class LineChartWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._values = []
         self._target_level = None
         self._best_values = []
+        self._ids = []
 
-    def set_series(self, values, best_values):
+        self._dates = []
+        self.setMouseTracking(True)
+        self._hover_index = None
+        self._mouse_pos = None
+
+    def set_series(self, values, best_values=None, dates=None, ids=None):
         self._values = list(values or [])
         self._best_values = list(best_values or [])
+        self._dates = list(dates or [])
+        self._ids = list(ids or [])
         self.update()
+        
         
     def set_target_level(self, level):
         self._target_level = level
@@ -36,7 +45,7 @@ class LineChartWidget(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
         p.fillRect(self.rect(), QtGui.QColor("#ffffff"))
-        r = self.rect().adjusted(48, 14, -14, -20)
+        r = self.rect().adjusted(48, 14, -14, -42)
 
         if len(self._values) < 2:
             p.setPen(QtGui.QPen(QtGui.QColor("#888"), 1))
@@ -44,7 +53,6 @@ class LineChartWidget(QtWidgets.QWidget):
             return
 
         vals = self._values
-        best = self._best_values if len(self._best_values) == len(vals) else None
         vmin, vmax = 1.0, 5.0
 
         def y_for(v: float) -> float:
@@ -64,23 +72,86 @@ class LineChartWidget(QtWidgets.QWidget):
         for level in range(1, 6):
             y = y_for(level)
             p.drawText(int(r.left()) - 26, int(y) + 5, str(level))
+        pts = [QtCore.QPointF(x_for(i), y_for(v)) for i, v in enumerate(vals)]
 
-        def smooth_path(series):
-            pts = [QtCore.QPointF(x_for(i), y_for(v)) for i, v in enumerate(series)]
-            path = QtGui.QPainterPath(pts[0])
-
-            for i in range(1, len(pts) - 1):
-                mid = QtCore.QPointF(
-                    (pts[i].x() + pts[i + 1].x()) / 2.0,
-                    (pts[i].y() + pts[i + 1].y()) / 2.0,
-                )
-                path.quadTo(pts[i], mid)
-
-            path.quadTo(pts[-2], pts[-1])
-            return path
+        path = QtGui.QPainterPath(pts[0])
+        for pt in pts[1:]:
+            path.lineTo(pt)
 
         p.setPen(QtGui.QPen(QtGui.QColor("#0078D7"), 2))
-        p.drawPath(smooth_path(vals))
+        p.drawPath(path)
+
+        p.setBrush(QtGui.QBrush(QtGui.QColor("#0078D7")))
+        p.setPen(QtGui.QPen(QtGui.QColor("#0078D7"), 2))
+
+        for i, v in enumerate(vals):
+            x = x_for(i)
+            y = y_for(v)
+            p.drawEllipse(QtCore.QPointF(x, y), 2, 2)
+
+        if self._hover_index is not None and self._hover_index < len(vals):
+            i = self._hover_index
+            score = vals[i]
+            score_text = str(int(score)) if float(score).is_integer() else f"{score:.1f}"
+
+            raw_date = self._dates[i] if i < len(self._dates) else ""
+
+            date_text = "Дата неизвестна"
+
+            try:
+                s = str(raw_date).replace("Z", "").replace(" ", "T")
+                dt = datetime.datetime.fromisoformat(s)
+
+                months = [
+                    "янв", "фев", "мар", "апр", "мая", "июн",
+                    "июл", "авг", "сен", "окт", "ноя", "дек"
+                ]
+
+                date_text = f"{dt.day} {months[dt.month - 1]} {dt.year} {dt.strftime('%H:%M')}"
+            except Exception:
+                if raw_date:
+                    date_text = str(raw_date)
+
+            train_id = self._ids[i] if i < len(self._ids) else i + 1
+
+            text = f"Тренировка №{train_id}\nОценка: {score_text}/5\nДата: {date_text}"
+
+            font = QtGui.QFont()
+            font.setPointSize(9)
+            font.setBold(True)
+            p.setFont(font)
+
+            metrics = QtGui.QFontMetrics(font)
+            lines = text.split("\n")
+            text_w = max(metrics.horizontalAdvance(line) for line in lines)
+            text_h = metrics.height() * len(lines)
+
+            box_w = text_w + 22
+            box_h = text_h + 18
+
+            px = int(x_for(i) + 12)
+            py = int(y_for(score) - box_h - 12)
+
+            if px + box_w > self.width() - 8:
+                px = int(x_for(i) - box_w - 12)
+
+            if py < 8:
+                py = int(y_for(score) + 12)
+
+            box_rect = QtCore.QRectF(px, py, box_w, box_h)
+
+            p.setPen(QtGui.QPen(QtGui.QColor("#d0d0d0"), 1))
+            p.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
+            p.drawRoundedRect(box_rect, 10, 10)
+
+            p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
+            total_text_height = metrics.height() * len(lines)
+            ty = py + (box_h - total_text_height) / 2 + metrics.ascent()
+
+            for line in lines:
+                text_rect = QtCore.QRectF(px + 5, ty - metrics.ascent(), box_w - 10, metrics.height())
+                p.drawText(px + 11, int(ty), line)
+                ty += metrics.height()
 
         if self._target_level is not None:
             lvl = max(1, min(5, int(self._target_level)))
@@ -89,6 +160,88 @@ class LineChartWidget(QtWidgets.QWidget):
             pen2.setStyle(QtCore.Qt.DashLine)
             p.setPen(pen2)
             p.drawLine(int(r.left()), int(y), int(r.right()), int(y))
+
+            legend_y = int(r.bottom() + 28)
+
+            font = QtGui.QFont()
+            font.setPointSize(9)
+            font.setBold(True)
+            p.setFont(font)
+
+            metrics = QtGui.QFontMetrics(font)
+
+            blue_text = "Результаты"
+            green_text = "Средний результат"
+
+            item_gap = 42
+            line_w = 34
+            text_gap = 10
+
+            blue_w = line_w + text_gap + metrics.horizontalAdvance(blue_text)
+            green_w = line_w + text_gap + metrics.horizontalAdvance(green_text)
+            total_w = blue_w + item_gap + green_w
+
+            legend_x = int(r.left() + (r.width() - total_w) / 2)
+
+            p.setPen(QtGui.QPen(QtGui.QColor("#0078D7"), 3))
+            p.drawLine(legend_x, legend_y, legend_x + line_w, legend_y)
+
+            p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
+            p.drawText(legend_x + line_w + text_gap, legend_y + 5, blue_text)
+
+            legend_x += blue_w + item_gap
+
+            green_pen = QtGui.QPen(QtGui.QColor("#00A65A"), 3)
+            green_pen.setStyle(QtCore.Qt.DashLine)
+            p.setPen(green_pen)
+            p.drawLine(legend_x, legend_y, legend_x + line_w, legend_y)
+
+            p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
+            p.drawText(legend_x + line_w + text_gap, legend_y + 5, green_text)
+
+    def mouseMoveEvent(self, event):
+        if len(self._values) < 2:
+            self._hover_index = None
+            self._mouse_pos = None
+            self.update()
+            return
+
+        r = self.rect().adjusted(48, 14, -14, -48)
+        vals = self._values
+        vmin, vmax = 1.0, 5.0
+
+        def x_for(i):
+            return r.left() + (i / (len(vals) - 1)) * r.width()
+
+        def y_for(v):
+            v = max(vmin, min(vmax, float(v)))
+            return r.bottom() - ((v - vmin) / (vmax - vmin)) * r.height()
+
+        nearest = None
+        nearest_dist = 999999
+
+        for i, v in enumerate(vals):
+            dx = event.x() - x_for(i)
+            dy = event.y() - y_for(v)
+            dist = (dx * dx + dy * dy) ** 0.5
+
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest = i
+
+        if nearest is not None and nearest_dist <= 8:
+            self._hover_index = nearest
+            self._mouse_pos = event.pos()
+        else:
+            self._hover_index = None
+            self._mouse_pos = None
+
+        self.update()
+    
+    def leaveEvent(self, event):
+        self._hover_index = None
+        self._mouse_pos = None
+        self.update()
 
 class MainWindow(QtWidgets.QWidget):
     def __init__(self, username: str, on_logout):
@@ -113,9 +266,10 @@ class MainWindow(QtWidgets.QWidget):
 
         self._stats_timer = QtCore.QTimer(self)
         self._stats_timer.timeout.connect(self._refresh_stats_and_home)
-        self._stats_timer.start(20000) 
+        self._stats_timer.start(60000)
 
-        self._account_status = {"is_verified": False, "email": None}
+        self._account_status = {"is_verified": False, "created_at": None}
+        QtCore.QTimer.singleShot(0, self._load_account_status)
     
     def _ru_plural(self, n: int, one: str, few: str, many: str) -> str:
         n = abs(int(n))
@@ -228,6 +382,8 @@ class MainWindow(QtWidgets.QWidget):
 
         scores = []
         dices = []
+        dates = []
+        ids = []
 
         for item in data:
             try:
@@ -239,6 +395,15 @@ class MainWindow(QtWidgets.QWidget):
                 dices.append(float(item.get("dice", 0.0)))
             except Exception:
                 pass
+
+            dates.append(
+                item.get("created_at")
+                or item.get("date")
+                or item.get("ts")
+                or "-"
+            )
+
+            ids.append(item.get("id") or "-")
 
         total = len(data)
         avg_score = sum(scores) / len(scores) if scores else 0.0
@@ -254,8 +419,8 @@ class MainWindow(QtWidgets.QWidget):
             self.stats_avg_dice_lbl.setText(f"{avg_dice:.2f}")
 
         if hasattr(self, "stats_chart"):
-            self.stats_chart.set_series(scores, [5.0] * len(scores))
-            self.stats_chart.set_target_level(5)
+            self.stats_chart.set_series(scores[-20:], [], dates[-20:], ids[-20:])
+            self.stats_chart.set_target_level(int(avg_score + 0.5) if scores else None)
 
     def _format_ago(self, ts_iso: str) -> str:
         if not ts_iso or ts_iso == "—":
@@ -289,8 +454,7 @@ class MainWindow(QtWidgets.QWidget):
         w = ApiWorker(get_training_history, 2000)
         w.ok.connect(self._apply_stats_data)
         w.ok.connect(self._apply_stats_page_data)
-        w.fail.connect(lambda _: self._apply_stats_data([]))
-        w.fail.connect(lambda _: self._apply_stats_page_data([]))
+        w.fail.connect(lambda err: print("Ошибка загрузки статистики:", err))
         w.finished.connect(w.deleteLater)
         w.start()
         self._stats_worker = w
@@ -545,8 +709,8 @@ class MainWindow(QtWidgets.QWidget):
                     f"Доступна версия: {latest_ver}"
                 )
 
-        except Exception as e:
-            RoundedDialog.warning("Update check error", str(e))
+        except Exception:
+            return
 
     def _nav_button_style(self, active: bool) -> str:
         if active:
@@ -590,8 +754,11 @@ class MainWindow(QtWidgets.QWidget):
 
     def _stats_load(self) -> list:
         try:
-            return get_training_history(limit=2000) or []
-        except Exception:
+            data = get_training_history(limit=2000) or []
+            print("Статистика загружена:", len(data))
+            return data
+        except Exception as e:
+            print("Ошибка _stats_load:", e)
             return []
 
     def _stats_append(self, rec: dict):
@@ -607,8 +774,8 @@ class MainWindow(QtWidgets.QWidget):
                 p_max=rec.get("p_max", 0.0),
                 ts=ts,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print("Ошибка сохранения статистики:", e)
 
     def _page_home(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
@@ -940,7 +1107,7 @@ class MainWindow(QtWidgets.QWidget):
         bl.setContentsMargins(14, 14, 14, 14)
         bl.setSpacing(10)
 
-        t = QtWidgets.QLabel("Динамика результатов за последние ")
+        t = QtWidgets.QLabel("Динамика результатов за последние 20 тренировок")
         t.setStyleSheet("font-size:14px;font-weight:900;color:#222;")
         bl.addWidget(t)
 
@@ -952,6 +1119,8 @@ class MainWindow(QtWidgets.QWidget):
 
         scores = []
         dices = []
+        dates = []
+        ids = []
 
         for item in data:
             try:
@@ -964,12 +1133,27 @@ class MainWindow(QtWidgets.QWidget):
             except Exception:
                 pass
 
+            dates.append(
+                item.get("created_at")
+                or item.get("date")
+                or item.get("ts")
+                or "-"
+            )
+
+            ids.append(item.get("id") or "-")
+
+        total = len(data)
+        avg_score = sum(scores) / len(scores) if scores else 0.0
+        avg_dice = sum(dices) / len(dices) if dices else 0.0
+        chart_scores = scores[-20:]
+        chart_dates = dates[-20:]
+
         self.stats_total_lbl.setText(str(total))
         self.stats_avg_score_lbl.setText(f"{avg_score:.1f}/5")
         self.stats_avg_dice_lbl.setText(f"{avg_dice:.2f}")
 
-        self.stats_chart.set_series(scores, [5.0] * len(scores))
-        self.stats_chart.set_target_level(5)
+        self.stats_chart.set_series(chart_scores, [], chart_dates, ids[-20:])
+        self.stats_chart.set_target_level(int(avg_score + 0.5) if scores else None)
 
         for lab in w.findChildren(QtWidgets.QLabel):
             lab.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -1132,9 +1316,10 @@ class MainWindow(QtWidgets.QWidget):
 
                     res = subprocess.run(
                         cmd,
-                        capture_output=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                         text=True,
-                        timeout=60  # ← ВАЖНО
+                        timeout=60
                     )
 
                     if res.returncode != 0:
@@ -1308,7 +1493,6 @@ class MainWindow(QtWidgets.QWidget):
                 pix = QtGui.QPixmap.fromImage(qimg.copy())
 
                 p.drawPixmap(QtCore.QRect(x0, y0, w, h), pix)
-
 
         class TrainingPage(QtWidgets.QWidget):
             def __init__(self, mainwin: "MainWindow"):
@@ -1842,22 +2026,9 @@ class MainWindow(QtWidgets.QWidget):
 
         self.settings_verify_icon = check         
         self.settings_verified_text = verified_text
-        
-        info_lbl = QtWidgets.QLabel("(❔)")
-        info_lbl.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
-        info_lbl.setToolTip(
-            "Поздравляем! Ваш аккаунт был подтверждён"
-        )
-        info_lbl.setStyleSheet("""
-            QLabel {
-                color: #9aa4b2;
-                font-size: 13px;
-            }
-        """)
 
         verified_row.addWidget(check)
         verified_row.addWidget(verified_text)
-        verified_row.addWidget(info_lbl)
         verified_row.addStretch(1)
 
         info_col.addLayout(verified_row)
@@ -2003,9 +2174,59 @@ class MainWindow(QtWidgets.QWidget):
             err.set_confirm_text("Понятно")
             err.exec_()
 
+    def _load_account_status(self):
+        try:
+            profile = get_profile() or {}
+            created_at = profile.get("created_at")
+            is_verified = False
+
+            if created_at:
+                s = str(created_at).replace("Z", "").replace(" ", "T")
+                created = datetime.datetime.fromisoformat(s)
+                is_verified = (datetime.datetime.now() - created).total_seconds() >= 24 * 60 * 60
+
+            self._account_status = {
+                "is_verified": is_verified,
+                "created_at": created_at
+            }
+
+            self._apply_account_status_ui()
+        except Exception as e:
+            print("Ошибка загрузки статуса аккаунта:", e)
+
     def _apply_account_status_ui(self):
         st = self._account_status or {}
         is_verified = bool(st.get("is_verified", False))
+
+        if not hasattr(self, "settings_verify_icon") or not hasattr(self, "settings_verified_text"):
+            return
+
+        if is_verified:
+            self.settings_verify_icon.setText("✓")
+            self.settings_verify_icon.setStyleSheet("""
+                QLabel {
+                    background-color: #22c55e;
+                    color: white;
+                    border-radius: 9px;
+                    font-size: 12px;
+                    font-weight: 800;
+                }
+            """)
+            self.settings_verified_text.setText("Аккаунт верифицирован")
+            self.settings_verified_text.setStyleSheet("font-size: 13px; color: #16a34a; font-weight: 700;")
+        else:
+            self.settings_verify_icon.setText("!")
+            self.settings_verify_icon.setStyleSheet("""
+                QLabel {
+                    background-color: #f59e0b;
+                    color: white;
+                    border-radius: 9px;
+                    font-size: 12px;
+                    font-weight: 800;
+                }
+            """)
+            self.settings_verified_text.setText("Аккаунт будет автоматически верифицирован через 24 часа после регистрации")
+            self.settings_verified_text.setStyleSheet("font-size: 13px; color: #d97706; font-weight: 700;")
 
     def _logout(self):
         from ui_dialogs import ConfirmDialog
@@ -2043,9 +2264,9 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         if delete_user_soft("delete my account"):
-            RoundedDialog.info("Готово", "Аккаунт удалён.")
+            RoundedDialog.info("Готово", "Аккаунт был успешно удалён")
             logout()
             self.close()
             self.on_logout()
         else:
-            RoundedDialog.warning("Ошибка", "Не удалось удалить (возможно, вы не авторизованы).")
+            RoundedDialog.warning("Ошибка", "Не удалось удалить ваш аккаунт, попробуйте позже")

@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import register_user, get_maintenance_status
-from ui_dialogs import DeleteAccountDialog, RoundedDialog
+from ui_dialogs import RoundedDialog
 
 class RegistrationWindow(QtWidgets.QWidget):
     def __init__(self, on_back):
@@ -8,15 +8,15 @@ class RegistrationWindow(QtWidgets.QWidget):
         self.on_back = on_back
 
         self.setWindowTitle("Регистрация")
-        self.setFixedSize(440, 390)
+        self.setFixedSize(470, 420)
         self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-        self.init_ui()
+        self.initUI()
 
-    def init_ui(self):
+    def initUI(self):
         wrapper = QtWidgets.QWidget(self)
-        wrapper.setGeometry(0, 0, 440, 390)
+        wrapper.setGeometry(0, 0, 470, 420)
         wrapper.setStyleSheet("""
             QWidget {
                 background-color: #f5f5f5;
@@ -25,8 +25,7 @@ class RegistrationWindow(QtWidgets.QWidget):
         """)
 
         layout = QtWidgets.QVBoxLayout(wrapper)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 15, 20, 18)
+        layout.setSpacing(15)
 
         top_bar = QtWidgets.QWidget()
         top_bar.setFixedHeight(40)
@@ -73,9 +72,9 @@ class RegistrationWindow(QtWidgets.QWidget):
         app_label = QtWidgets.QLabel("RetinopatiaApp")
         app_label.setStyleSheet("""
             QLabel {
-                color: #222;
-                font-size: 17px;
-                font-weight: 600;
+                color: #333;
+                font-size: 18px;
+                font-weight: bold;
             }
         """)
 
@@ -124,10 +123,10 @@ class RegistrationWindow(QtWidgets.QWidget):
 
         layout.addWidget(top_bar)
 
-        title = QtWidgets.QLabel("Регистрация")
-        title.setAlignment(QtCore.Qt.AlignCenter)
-        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #333;")
-        layout.addWidget(title)
+        title_label = QtWidgets.QLabel("Регистрация")
+        title_label.setAlignment(QtCore.Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #333;")
+        layout.addWidget(title_label)
 
         self.username_input = self.create_input("Логин")
         self.password_input = self.create_input("Пароль", True)
@@ -143,11 +142,11 @@ class RegistrationWindow(QtWidgets.QWidget):
         register_button.clicked.connect(self.handle_registration)
         layout.addWidget(register_button)
 
-        switch_to_login_label = QtWidgets.QLabel('Есть аккаунт? <a href="#">Войдите</a>!')
-        switch_to_login_label.setAlignment(QtCore.Qt.AlignCenter)
-        switch_to_login_label.setStyleSheet("font-size: 12px; color: #0078D7;")
-        switch_to_login_label.linkActivated.connect(lambda _: self.handle_back())
-        layout.addWidget(switch_to_login_label)
+        login_label = QtWidgets.QLabel('Есть аккаунт? <a href="#">Войдите</a>!')
+        login_label.setAlignment(QtCore.Qt.AlignCenter)
+        login_label.setStyleSheet("font-size: 12px; color: #0078D7;")
+        login_label.linkActivated.connect(lambda _: self.handle_back())
+        layout.addWidget(login_label)
 
     def _top_mouse_press(self, event):
         if event.button() == QtCore.Qt.LeftButton:
@@ -192,19 +191,17 @@ class RegistrationWindow(QtWidgets.QWidget):
         """
 
     def darken_color(self, color):
-        if color == "#0078D7":
-            return "#005499"
-        return color
+        return "#005499" if color == "#0078D7" else "#1e7e34"
 
     def handle_registration(self):
         username = self.username_input.text().strip()
-        password = self.password_input.text().strip()
-        password_repeat = self.password_repeat_input.text().strip()
+        password = self.password_input.text()
+        password_repeat = self.password_repeat_input.text()
 
         if not username or not password or not password_repeat:
             RoundedDialog.warning("Ошибка", "Одно из полей данных вашего будущего аккаунта пустует.\nПожалуйста, заполните все поля до конца!")
             return
-        
+
         try:
             st = get_maintenance_status()
             if st.get("enabled"):
@@ -218,14 +215,13 @@ class RegistrationWindow(QtWidgets.QWidget):
             RoundedDialog.warning("Ошибка", "Введённые вами пароли не совпадают.\nПожалуйста, исправьте ваши пароли!")
             return
 
-        if register_user(username, password):
+        ok, error_text = register_user(username, password)
+
+        if ok:
             RoundedDialog.info("Успех", "Вы успешно зарегистрировались!")
             self.handle_back()
         else:
-            RoundedDialog.warning(
-                "Логин занят",
-                "Этот логин уже используется.\nПожалуйста, выберите другой."
-            )
+            RoundedDialog.warning("Ошибка регистрации", error_text)
 
     def handle_back(self):
         self.on_back()

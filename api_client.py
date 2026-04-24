@@ -1,10 +1,44 @@
 import requests
 from typing import Optional, Dict, Any, List
+import os
+import json
 
-BASE_URL = "https://retinoserver.vercel.app/"
+BASE_URL = "https://retinoserver.vercel.app"
 
 _timeout = 10
 _token: Optional[str] = None
+
+_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_token.json")
+
+
+def _load_token() -> Optional[str]:
+    try:
+        if not os.path.exists(_TOKEN_FILE):
+            return None
+        with open(_TOKEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("token")
+    except Exception:
+        return None
+
+
+def _save_token(token: str) -> None:
+    try:
+        with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump({"token": token}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _clear_token() -> None:
+    try:
+        if os.path.exists(_TOKEN_FILE):
+            os.remove(_TOKEN_FILE)
+    except Exception:
+        pass
+
+
+_token = _load_token()
 
 
 def _headers() -> Dict[str, str]:
@@ -14,26 +48,38 @@ def _headers() -> Dict[str, str]:
     return h
 
 
-def register_user(username: str, password: str) -> bool:
+def register_user(username: str, password: str):
     r = requests.post(
         f"{BASE_URL}/auth/register",
         json={"username": username, "password": password},
         headers=_headers(),
         timeout=_timeout,
     )
+
     if r.status_code == 200:
-        return True
-    if r.status_code in (400, 409):
-        return False
-    r.raise_for_status()
-    return False
+        return True, ""
+
+    try:
+        detail = r.json().get("detail", "")
+    except Exception:
+        detail = ""
+
+    if detail == "Invalid username":
+        return False, "Логин должен должен содержать от 3 до 64 символов. Разрешены английские буквы (A-Z), цифры (1-9), дефис (-) или нижнее подчёркивание (_)"
+
+    if detail == "Invalid password length":
+        return False, "Пароль должен содержать от 4 до 256 символов"
+
+    if detail == "User already exists":
+        return False, "Этот логин уже используется\nПожалуйста, выберите другой, чтобы зарегистрироваться"
+
+    if detail == "User is deleted":
+        return False, "Этот логин уже был использован ранее\nПожалуйста, выберите другой, чтобы зарегистрироваться"
+
+    return False, "Не удалось зарегистрироваться\nПопробуйте другой логин или повторите позже"
 
 
 def username_status(username: str) -> str:
-    """
-    Ожидаемые ответы:
-      {"status":"ok"} или {"status":"deleted"} или {"status":"exists"}
-    """
     r = requests.post(
         f"{BASE_URL}/auth/username_status",
         json={"username": username},
@@ -55,29 +101,44 @@ def authenticate_user(username: str, password: str) -> bool:
         r = requests.post(
             f"{BASE_URL}/auth/login",
             json={"username": username, "password": password},
-            headers=_headers(),
+            headers={"Content-Type": "application/json"},
             timeout=_timeout,
         )
 
         if r.status_code == 200:
             data = r.json()
             _token = data.get("token")
-            return True
+            if _token:
+                _save_token(_token)
+                return True
 
         if r.status_code in (401, 403):
             _token = None
+            _clear_token()
             return False
 
         _token = None
+        _clear_token()
         return False
 
     except requests.exceptions.RequestException:
         _token = None
+        _clear_token()
         return False
 
 def logout() -> None:
     global _token
+    try:
+        requests.post(
+            f"{BASE_URL}/auth/logout",
+            headers=_headers(),
+            timeout=_timeout,
+        )
+    except Exception:
+        pass
+
     _token = None
+    _clear_token()
 
 def change_password(username: str, old_password: str, new_password: str) -> bool:
     r = requests.post(
@@ -152,3 +213,11 @@ def reset_training_history() -> bool:
         timeout=_timeout,
     )
     return r.status_code == 200
+
+def get_profile():
+    r = requests.get(
+        f"{BASE_URL}/auth/profile",
+        headers=_headers(),
+        timeout=_timeout,
+    )
+    return r.json() if r.status_code == 200 else None
