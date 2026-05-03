@@ -22,12 +22,24 @@ def _load_token() -> Optional[str]:
         return None
 
 
-def _save_token(token: str) -> None:
+def _save_token(token: str, username: str = "") -> None:
     try:
         with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
-            json.dump({"token": token}, f, ensure_ascii=False)
+            json.dump({"token": token, "username": username}, f, ensure_ascii=False)
     except Exception:
         pass
+
+
+def get_saved_session_username() -> Optional[str]:
+    try:
+        if not os.path.exists(_TOKEN_FILE):
+            return None
+        with open(_TOKEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        username = (data.get("username") or "").strip()
+        return username or None
+    except Exception:
+        return None
 
 
 def _clear_token() -> None:
@@ -109,7 +121,7 @@ def authenticate_user(username: str, password: str) -> bool:
             data = r.json()
             _token = data.get("token")
             if _token:
-                _save_token(_token)
+                _save_token(_token, data.get("username", username))
                 return True
 
         if r.status_code in (401, 403):
@@ -221,3 +233,24 @@ def get_profile():
         timeout=_timeout,
     )
     return r.json() if r.status_code == 200 else None
+
+def has_saved_session() -> bool:
+    return bool(_token)
+
+
+def clear_saved_session() -> None:
+    global _token
+    _token = None
+    _clear_token()
+
+
+def check_saved_session():
+    try:
+        profile = get_profile()
+        if profile and profile.get("ok") and profile.get("username"):
+            return True, profile.get("username")
+    except Exception:
+        pass
+
+    clear_saved_session()
+    return False, None

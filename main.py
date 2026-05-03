@@ -2,7 +2,7 @@ import os
 import sys
 
 venv_dir = os.path.dirname(os.path.dirname(sys.executable))
-current_v = "0.3.0"
+current_v = "0.4.0"
 
 qt_plugins = os.path.join(
     venv_dir,
@@ -25,14 +25,41 @@ platforms = os.path.join(qt_plugins, "platforms")
 # print("[QT FIX] PLATFORMS_PATH =", platforms)
 
 from PyQt5 import QtWidgets
+from ui_dialogs import ConfirmDialog, RoundedDialog
 from login_window import LoginWindow
 from registration_window import RegistrationWindow
+from api_client import check_saved_session, get_saved_session_username, clear_saved_session
 
 class AppController:
     def __init__(self):
         self.login_window = None
         self.reg_window = None
         self.main_window = None
+
+    def start(self):
+            saved_username = get_saved_session_username()
+
+            if saved_username:
+                if ConfirmDialog.ask(
+                    "Найдена прошлая сессия",
+                    f"В последний раз вы входили в приложение через аккаунт {saved_username}. Хотите продолжить работу в этом аккаунте или авторизироваться в другом?\n",
+                    confirm_text="В этот аккаунт",
+                    cancel_text="В другой аккаунт",
+                    danger=False
+                ):
+                    ok, username = check_saved_session()
+                    if ok:
+                        self.on_login_success(username)
+                        return
+
+                    RoundedDialog.warning(
+                        "Сессия истекла",
+                        "Прошлая сессия больше недействительна. Войдите заново."
+                    )
+                else:
+                    clear_saved_session()
+
+            self.show_login()
 
     def show_login(self):
         if self.reg_window is not None:
@@ -69,7 +96,7 @@ class AppController:
 def main():
     app = QtWidgets.QApplication(sys.argv)
     controller = AppController()
-    controller.show_login()
+    controller.start()
     sys.exit(app.exec_())
 
 
