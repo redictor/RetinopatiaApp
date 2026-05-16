@@ -1,5 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import change_password
+from ui_styles import window_button_style, set_icon
 
 class RoundedDialog(QtWidgets.QDialog):
     def __init__(self, title: str, text: str, kind: str = "info"):
@@ -73,18 +74,11 @@ class RoundedDialog(QtWidgets.QDialog):
         title_lbl.mouseMoveEvent = self._header_mouse_move
         title_lbl.mouseReleaseEvent = self._header_mouse_release
 
-        close_btn = QtWidgets.QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f2;
-                border: none;
-                border-radius: 14px;
-                color: #444;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #e8e8e8; }
-        """)
+        close_btn = QtWidgets.QPushButton()
+        close_btn.setFixedSize(30, 30)
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.setStyleSheet(window_button_style("close"))
+        set_icon(close_btn, "assets/icons/close.svg")
         close_btn.clicked.connect(self.reject)
 
         header_layout.addWidget(icon)
@@ -226,18 +220,11 @@ class ConfirmDialog(QtWidgets.QDialog):
         title_lbl.mouseMoveEvent = self._header_mouse_move
         title_lbl.mouseReleaseEvent = self._header_mouse_release
 
-        close_btn = QtWidgets.QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f2;
-                border: none;
-                border-radius: 14px;
-                color: #444;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #e8e8e8; }
-        """)
+        close_btn = QtWidgets.QPushButton()
+        close_btn.setFixedSize(30, 30)
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.setStyleSheet(window_button_style("close"))
+        set_icon(close_btn, "assets/icons/close.svg")
         close_btn.clicked.connect(self.reject)
 
         header_layout.addWidget(icon)
@@ -390,18 +377,11 @@ class DeleteAccountDialog(QtWidgets.QDialog):
         title.mouseMoveEvent = self._header_mouse_move
         title.mouseReleaseEvent = self._header_mouse_release
 
-        close_btn = QtWidgets.QPushButton("✕")
+        close_btn = QtWidgets.QPushButton()
         close_btn.setFixedSize(30, 30)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f2;
-                border: none;
-                border-radius: 15px;
-                color: #444;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #e8e8e8; }
-        """)
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.setStyleSheet(window_button_style("close"))
+        set_icon(close_btn, "assets/icons/close.svg")
         close_btn.clicked.connect(self.reject)
 
         top.addWidget(title)
@@ -587,18 +567,11 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         title.mouseMoveEvent = self._header_mouse_move
         title.mouseReleaseEvent = self._header_mouse_release
 
-        close_btn = QtWidgets.QPushButton("✕")
+        close_btn = QtWidgets.QPushButton()
         close_btn.setFixedSize(30, 30)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f2;
-                border: none;
-                border-radius: 15px;
-                color: #444;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #e8e8e8; }
-        """)
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.setStyleSheet(window_button_style("close"))
+        set_icon(close_btn, "assets/icons/close.svg")
         close_btn.clicked.connect(self.reject)
 
         top.addWidget(title)

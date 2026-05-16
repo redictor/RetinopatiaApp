@@ -3,8 +3,9 @@ import sys
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 from PyQt5 import QtWidgets, QtCore, QtGui
-from api_client import delete_user_soft, logout, get_maintenance_status, get_updates, save_training_record, get_training_history, reset_training_history, get_profile
-from ui_dialogs import DeleteAccountDialog, RoundedDialog
+from api_client import logout, get_maintenance_status, get_updates, save_training_record, get_training_history, reset_training_history, get_profile
+from ui_dialogs import RoundedDialog
+from ui_styles import create_window_buttons
 from ui_dialogs import ApiWorker
 import numpy as np
 import cv2
@@ -439,7 +440,7 @@ class MainWindow(QtWidgets.QWidget):
         self._stats_timer.start(60000)
 
         self._account_status = {"is_verified": False, "created_at": None}
-        QtCore.QTimer.singleShot(0, self._load_account_status)
+        QtCore.QTimer.singleShot(300, self._load_account_status_async)
     
     def _ru_plural(self, n: int, one: str, few: str, many: str) -> str:
         n = abs(int(n))
@@ -754,35 +755,7 @@ class MainWindow(QtWidgets.QWidget):
         drag_area.setStyleSheet("background: transparent;")
         drag_area.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
 
-        minimize_button = QtWidgets.QPushButton("─")
-        minimize_button.setFixedSize(30, 30)
-        minimize_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FFA500;
-                border: none;
-                border-radius: 15px;
-                color: white;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: #FF8C00; }
-        """)
-        minimize_button.clicked.connect(self.showMinimized)
-
-        close_button = QtWidgets.QPushButton("✕")
-        close_button.setFixedSize(30, 30)
-        close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FF4444;
-                border: none;
-                border-radius: 15px;
-                color: white;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: #CC0000; }
-        """)
-        close_button.clicked.connect(self.close)
+        minimize_button, close_button = create_window_buttons(self)
 
         top.addWidget(brand)
         top.addStretch(1)
@@ -866,7 +839,7 @@ class MainWindow(QtWidgets.QWidget):
         body.addWidget(content, 1)
         root.addLayout(body)
         QtCore.QTimer.singleShot(0, self._refresh_stats_and_home)
-        self._check_update()
+        QtCore.QTimer.singleShot(1200, self._check_update)
 
     def _ver_tuple(self, v: str):
         s = (v or "").strip().lower()
@@ -971,6 +944,20 @@ class MainWindow(QtWidgets.QWidget):
         except Exception as e:
             print("Ошибка сохранения статистики:", e)
 
+    def _home_greeting(self, name: str) -> str:
+        hour = datetime.datetime.now().hour
+
+        if 5 <= hour < 12:
+            greeting = "Доброе утро"
+        elif 12 <= hour < 18:
+            greeting = "Добрый день"
+        elif 18 <= hour < 23:
+            greeting = "Добрый вечер"
+        else:
+            greeting = "Доброй ночи"
+
+        return f"{greeting}, {name}!"
+
     def _page_home(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         w.setStyleSheet("""
@@ -989,9 +976,9 @@ class MainWindow(QtWidgets.QWidget):
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(4)
 
-        title = QtWidgets.QLabel(f"Добро пожаловать, {self.username}!")
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: #222;")
-        left.addWidget(title)
+        self.home_title_label = QtWidgets.QLabel(self._home_greeting(self.username))
+        self.home_title_label.setStyleSheet("font-size: 20px; font-weight: 800; color: #222;")
+        left.addWidget(self.home_title_label)
 
         subtitle = QtWidgets.QLabel("Тренируйтесь определять диабетическую ретинопатию и её стадию по снимкам.")
         subtitle.setWordWrap(True)
@@ -1247,7 +1234,7 @@ class MainWindow(QtWidgets.QWidget):
         title = QtWidgets.QLabel("Статистика")
         title.setStyleSheet("font-size: 22px; font-weight: 800; color: #222;")
         l.addWidget(title)
-        data = self._stats_load()
+        data = []
 
         cards = QtWidgets.QHBoxLayout()
         cards.setSpacing(14)
@@ -1287,7 +1274,7 @@ class MainWindow(QtWidgets.QWidget):
         avg_dice = (sum(d.get("dice", 0.0) for d in data) / total) if total else 0.0
 
         c1, self.stats_total_lbl = card("Проведено тренировок", "-", "Количество решённых заданий")
-        c2, self.stats_avg_score_lbl = card("QWS", "—/5", "Средняя оценка качества ваших знаний")
+        c2, self.stats_avg_score_lbl = card("QWS", "-/5", "Средняя оценка качества ваших знаний")
         c2.layout().insertWidget(1, self.stats_avg_score_lbl)
         c3, self.stats_avg_dice_lbl = card("AIS", "-", "Соответствие с областью внимания")
 
@@ -1867,7 +1854,6 @@ class MainWindow(QtWidgets.QWidget):
                 title.setStyleSheet("QLabel{font-size:22px;font-weight:900;}")
                 root.addWidget(title)
 
-                # прогресс этапов
                 self.step_bar = QtWidgets.QProgressBar()
                 self.step_bar.setRange(0, 3)
                 self.step_bar.setValue(0)
@@ -1882,7 +1868,6 @@ class MainWindow(QtWidgets.QWidget):
                 grid = QtWidgets.QHBoxLayout()
                 grid.setSpacing(12)
 
-                # left card (canvas)
                 left = QtWidgets.QFrame()
                 left.setStyleSheet("QFrame{background:#fafafa;border:1px solid #e6e6e6;border-radius:16px;}")
                 ll = QtWidgets.QVBoxLayout(left)
@@ -2504,35 +2489,74 @@ class MainWindow(QtWidgets.QWidget):
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #222;")
         l.addWidget(title)
 
-        profile = QtWidgets.QWidget()
+        profile = QtWidgets.QFrame()
+        profile.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e8e8e8;
+                border-radius: 18px;
+            }
+            QLabel {
+                border: none;
+                background: transparent;
+            }
+        """)
+
         pl = QtWidgets.QHBoxLayout(profile)
-        pl.setContentsMargins(0, 0, 0, 0)
-        pl.setSpacing(12)
+        pl.setContentsMargins(18, 16, 18, 16)
+        pl.setSpacing(14)
 
         avatar = QtWidgets.QLabel()
-        avatar.setFixedSize(52, 52)
-
-        pix = QtGui.QPixmap("assets/icons/avatar.png")  # <-- путь к файлу
-        pix = pix.scaled(
-            avatar.size(),
-            QtCore.Qt.KeepAspectRatioByExpanding,
-            QtCore.Qt.SmoothTransformation
-        )
-
-        avatar.setPixmap(pix)
+        avatar.setFixedSize(64, 64)
         avatar.setAlignment(QtCore.Qt.AlignCenter)
+
+        pix = QtGui.QPixmap("assets/icons/avatar.png")
+        if not pix.isNull():
+            pix = pix.scaled(
+                avatar.size(),
+                QtCore.Qt.KeepAspectRatioByExpanding,
+                QtCore.Qt.SmoothTransformation
+            )
+            avatar.setPixmap(pix)
+        else:
+            avatar.setText("👤")
+            avatar.setStyleSheet("""
+                QLabel {
+                    background-color: #f1f5f9;
+                    border-radius: 32px;
+                    font-size: 30px;
+                }
+            """)
 
         pl.addWidget(avatar)
 
         info_col = QtWidgets.QVBoxLayout()
-        info_col.setSpacing(4)
+        info_col.setContentsMargins(0, 0, 0, 0)
+        info_col.setSpacing(5)
 
-        name = QtWidgets.QLabel(self.username)
-        name.setStyleSheet("font-size: 16px; font-weight: 700; color: #222;")
-        info_col.addWidget(name)
+        self.settings_header_name_lbl = QtWidgets.QLabel(self.username)
+        self.settings_header_name_lbl.setStyleSheet("""
+            QLabel {
+                font-size: 22px;
+                font-weight: 900;
+                color: #111827;
+            }
+        """)
+        info_col.addWidget(self.settings_header_name_lbl)
+
+        self.settings_header_login_lbl = QtWidgets.QLabel(f"@{self.username}")
+        self.settings_header_login_lbl.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: 700;
+                color: #6b7280;
+            }
+        """)
+        info_col.addWidget(self.settings_header_login_lbl)
 
         verified_row = QtWidgets.QHBoxLayout()
         verified_row.setSpacing(6)
+        verified_row.setContentsMargins(0, 4, 0, 0)
 
         check = QtWidgets.QLabel("✓")
         check.setFixedSize(18, 18)
@@ -2550,7 +2574,7 @@ class MainWindow(QtWidgets.QWidget):
         verified_text = QtWidgets.QLabel("Аккаунт верифицирован")
         verified_text.setStyleSheet("font-size: 13px; color: #16a34a; font-weight: 700;")
 
-        self.settings_verify_icon = check         
+        self.settings_verify_icon = check
         self.settings_verified_text = verified_text
 
         verified_row.addWidget(check)
@@ -2558,9 +2582,111 @@ class MainWindow(QtWidgets.QWidget):
         verified_row.addStretch(1)
 
         info_col.addLayout(verified_row)
+
         pl.addLayout(info_col, 1)
 
         l.addWidget(profile)
+
+        org_box = QtWidgets.QFrame()
+        org_box.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 18px;
+            }
+            QLabel {
+                border: none;
+                background: transparent;
+            }
+        """)
+
+        org_layout = QtWidgets.QVBoxLayout(org_box)
+        org_layout.setContentsMargins(20, 18, 20, 18)
+        org_layout.setSpacing(14)
+
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(10)
+
+        org_title = QtWidgets.QLabel("Организация")
+        org_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: 900;
+                color: #111827;
+            }
+        """)
+
+        self.settings_license_badge = QtWidgets.QLabel("Учебная лицензия")
+        self.settings_license_badge.setStyleSheet("""
+            QLabel {
+                background-color: #e0f2fe;
+                color: #0369a1;
+                border-radius: 10px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 900;
+            }
+        """)
+
+        title_row.addWidget(org_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.settings_license_badge)
+        org_layout.addLayout(title_row)
+
+
+        def org_item(title, value):
+            wrapper = QtWidgets.QWidget()
+            wrapper.setStyleSheet("background: transparent; border: none;")
+
+            item_layout = QtWidgets.QVBoxLayout(wrapper)
+            item_layout.setContentsMargins(0, 0, 0, 0)
+            item_layout.setSpacing(3)
+
+            title_lbl = QtWidgets.QLabel(title)
+            title_lbl.setStyleSheet("""
+                QLabel {
+                    font-size: 11px;
+                    color: #6b7280;
+                    font-weight: 800;
+                }
+            """)
+
+            value_lbl = QtWidgets.QLabel(value)
+            value_lbl.setWordWrap(True)
+            value_lbl.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            value_lbl.setStyleSheet("""
+                QLabel {
+                    font-size: 14px;
+                    color: #111827;
+                    font-weight: 900;
+                }
+            """)
+
+            item_layout.addWidget(title_lbl)
+            item_layout.addWidget(value_lbl)
+
+            return wrapper, value_lbl
+
+
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(46)
+        grid.setVerticalSpacing(16)
+
+        org_name_widget, self.settings_org_lbl = org_item("Название", "Не назначена")
+        course_widget, self.settings_course_lbl = org_item("Курс и Группа", "Не указано")
+        access_widget, self.settings_access_lbl = org_item("Доступ до", "Не указано")
+        support_widget, self.settings_support_lbl = org_item("Поддержка", "Не указано")
+
+        grid.addWidget(org_name_widget, 0, 0)
+        grid.addWidget(course_widget, 0, 1)
+        grid.addWidget(access_widget, 1, 0)
+        grid.addWidget(support_widget, 1, 1)
+
+        org_layout.addLayout(grid)
+
+        l.addWidget(org_box)
 
         status_layout = QtWidgets.QHBoxLayout()
         status_layout.setSpacing(6)
@@ -2602,52 +2728,6 @@ class MainWindow(QtWidgets.QWidget):
 
 
         l.addStretch(1)
-
-        danger_title = QtWidgets.QLabel("Опасная зона")
-        danger_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #222;")
-        l.addWidget(danger_title)
-
-        danger_text = QtWidgets.QLabel(
-            "Удаление аккаунта необратимо.\n"
-            "Будут удалены прогресс обучения, статистика, результаты тестов и любые сохранённые данные.\n"
-            "После удаления этот логин останется недоступен навсегда."
-        )
-        danger_text.setWordWrap(True)
-        danger_text.setStyleSheet("font-size: 12px; color: #666;")
-        l.addWidget(danger_text)
-
-        # reset_btn = QtWidgets.QPushButton("Сбросить статистику тренировок")
-        # reset_btn.setFixedHeight(40)
-        # reset_btn.setStyleSheet("""
-        #     QPushButton {
-        #         background-color: #ffecec;
-        #         color: #a30000;
-        #         border: 1px solid #ffb3b3;
-        #         border-radius: 8px;
-        #     }
-        #     QPushButton:hover {
-        #         background-color: #ffd6d6;
-        #     }
-        # """)
-        # reset_btn.clicked.connect(self._on_reset_training)
-
-        # l.addWidget(reset_btn)
-
-        delete_btn = QtWidgets.QPushButton("Удалить аккаунт")
-        delete_btn.setFixedHeight(44)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF4444;
-                color: white;
-                border: none;
-                border-radius: 12px;
-                font-size: 14px;
-                font-weight: 800;
-            }
-            QPushButton:hover { background-color: #CC0000; }
-        """)
-        delete_btn.clicked.connect(self._delete_account)
-        l.addWidget(delete_btn)
 
         last_v = self._latest_version()
         footer = QtWidgets.QLabel(f"by redictor, 2026 • MIT License • {current_v}")
@@ -2700,9 +2780,43 @@ class MainWindow(QtWidgets.QWidget):
             err.set_confirm_text("Понятно")
             err.exec_()
 
-    def _load_account_status(self):
+    def _load_account_status_async(self):
+        w = ApiWorker(get_profile)
+        w.ok.connect(self._load_account_status_from_profile)
+        w.fail.connect(lambda err: print("Ошибка загрузки профиля:", err))
+        w.finished.connect(w.deleteLater)
+        w.start()
+        self._profile_worker = w
+
+    def _load_account_status_from_profile(self, profile):
         try:
-            profile = get_profile() or {}
+            profile = profile or {}
+            display_name = profile.get("display_name") or self.username
+
+            if hasattr(self, "home_title_label"):
+                self.home_title_label.setText(self._home_greeting(display_name))
+
+            if hasattr(self, "settings_header_name_lbl"):
+                self.settings_header_name_lbl.setText(display_name)
+
+            if hasattr(self, "settings_header_login_lbl"):
+                self.settings_header_login_lbl.setText(f"@{self.username}")
+
+            if hasattr(self, "settings_org_lbl"):
+                self.settings_org_lbl.setText(profile.get("organization_name") or "Не назначена")
+
+            if hasattr(self, "settings_course_lbl"):
+                self.settings_course_lbl.setText(profile.get("course_group") or "Не указано")
+
+            if hasattr(self, "settings_access_lbl"):
+                self.settings_access_lbl.setText(profile.get("access_expires_at") or "Не указано")
+
+            if hasattr(self, "settings_support_lbl"):
+                self.settings_support_lbl.setText(profile.get("support_contact") or "Не указано")
+
+            if hasattr(self, "settings_license_badge"):
+                self.settings_license_badge.setText(profile.get("license_type") or "Учебная лицензия")
+
             created_at = profile.get("created_at")
             is_verified = False
 
@@ -2717,6 +2831,7 @@ class MainWindow(QtWidgets.QWidget):
             }
 
             self._apply_account_status_ui()
+
         except Exception as e:
             print("Ошибка загрузки статуса аккаунта:", e)
 
@@ -2778,21 +2893,18 @@ class MainWindow(QtWidgets.QWidget):
         if self.on_logout:
             self.on_logout()
 
+    def _save_display_name(self):
+        name = self.display_name_input.text().strip()
 
+        if len(name) < 2:
+            RoundedDialog.warning("Ошибка", "Имя должно содержать минимум 2 символа")
+            return
+
+        if update_profile(name):
+            RoundedDialog.info("Готово", "Имя аккаунта было успешно обновлено")
+        else:
+            RoundedDialog.warning("Ошибка", "Не удалось сохранить новое имя. Попробуйте позже")
 
     def _change_password(self):
         from ui_dialogs import ChangePasswordDialog
         ChangePasswordDialog.run(self, self.username)
-
-    def _delete_account(self):
-        ok = DeleteAccountDialog.run(self, self.username)
-        if not ok:
-            return
-
-        if delete_user_soft("delete my account"):
-            RoundedDialog.info("Готово", "Аккаунт был успешно удалён")
-            logout()
-            self.close()
-            self.on_logout()
-        else:
-            RoundedDialog.warning("Ошибка", "Не удалось удалить ваш аккаунт, попробуйте позже")

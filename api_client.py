@@ -107,7 +107,7 @@ def username_status(username: str) -> str:
     return "unknown"
 
 
-def authenticate_user(username: str, password: str) -> bool:
+def authenticate_user(username: str, password: str):
     global _token
     try:
         r = requests.post(
@@ -122,21 +122,25 @@ def authenticate_user(username: str, password: str) -> bool:
             _token = data.get("token")
             if _token:
                 _save_token(_token, data.get("username", username))
-                return True
+                return True, ""
 
-        if r.status_code in (401, 403):
-            _token = None
-            _clear_token()
-            return False
+        try:
+            detail = r.json().get("detail", "")
+        except Exception:
+            detail = ""
 
         _token = None
         _clear_token()
-        return False
+
+        if detail == "Access expired":
+            return False, "access_expired"
+
+        return False, "invalid_credentials"
 
     except requests.exceptions.RequestException:
         _token = None
         _clear_token()
-        return False
+        return False, "network_error"
 
 def logout() -> None:
     global _token
@@ -247,10 +251,13 @@ def clear_saved_session() -> None:
 def check_saved_session():
     try:
         profile = get_profile()
-        if profile and profile.get("ok") and profile.get("username"):
-            return True, profile.get("username")
-    except Exception:
-        pass
 
-    clear_saved_session()
-    return False, None
+        if not profile or not profile.get("ok") or not profile.get("username"):
+            clear_saved_session()
+            return False, None, "invalid_session"
+
+        return True, profile.get("username"), ""
+
+    except Exception:
+        clear_saved_session()
+        return False, None, "invalid_session"
