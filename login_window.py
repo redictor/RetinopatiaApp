@@ -2,30 +2,42 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import authenticate_user
 from api_client import get_maintenance_status
 from ui_dialogs import RoundedDialog
+import app_logger
 import math
+
+_log = app_logger.get("login")
+
 
 class LoginWorker(QtCore.QThread):
     done = QtCore.pyqtSignal(bool, str, str)
 
-    def __init__(self, username, password):
+    def __init__(self, username, password, remember):
         super().__init__()
         self.username = username
         self.password = password
+        self.remember = remember
 
     def run(self):
         try:
             st = get_maintenance_status()
             if st.get("enabled"):
                 msg = st.get("message") or "Ведутся технические работы. Доступ запрещён."
+                _log.warning("Техработы на сервере при попытке входа: %s", msg)
                 self.done.emit(False, "maintenance", msg)
                 return
         except Exception:
-            pass
+            _log.debug("Не удалось проверить статус техработ при входе", exc_info=True)
 
         try:
-            ok, error = authenticate_user(self.username, self.password)
+            _log.debug("Попытка авторизации: %s", self.username)
+            ok, error = authenticate_user(self.username, self.password, self.remember)
+            if ok:
+                _log.info("Успешная авторизация: %s", self.username)
+            else:
+                _log.warning("Ошибка авторизации: %s, причина=%s", self.username, error)
             self.done.emit(bool(ok), "auth", error)
         except Exception as e:
+            _log.error("Необработанная ошибка при авторизации: %s", self.username, exc_info=True)
             self.done.emit(False, "error", str(e))
 
 
@@ -56,7 +68,7 @@ class SpinnerButton(QtWidgets.QPushButton):
             self.setEnabled(True)
 
         self.update()
-    
+
     def setError(self):
         self._timer.stop()
         self._loading = False
@@ -134,6 +146,139 @@ class SpinnerButton(QtWidgets.QPushButton):
             painter.drawLine(cx - 7, cy - 7, cx + 7, cy + 7)
             painter.drawLine(cx + 7, cy - 7, cx - 7, cy + 7)
 
+
+class IconLineEdit(QtWidgets.QWidget):
+    """Input field with a left icon, label above, and optional right toggle button."""
+
+    def __init__(self, label_text, placeholder, icon_path=None,
+                 is_password=False, parent=None):
+        super().__init__(parent)
+        self.is_password = is_password
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        label = QtWidgets.QLabel(label_text)
+        label.setStyleSheet("font-size: 13px; color: #444; font-weight: 500;")
+        outer.addWidget(label)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+
+        self.field_container = QtWidgets.QWidget()
+        self.field_container.setObjectName("fieldContainer")
+        self.field_container.setStyleSheet("""
+            QWidget#fieldContainer {
+                background: white;
+                border: 1.5px solid #dde3ec;
+                border-radius: 9px;
+            }
+        """)
+
+        container_row = QtWidgets.QHBoxLayout(self.field_container)
+        container_row.setContentsMargins(12, 0, 12, 0)
+        container_row.setSpacing(6)
+
+        if icon_path:
+            icon_label = QtWidgets.QLabel()
+            icon_label.setFixedSize(18, 18)
+            icon_label.setAlignment(QtCore.Qt.AlignCenter)
+            pix = QtGui.QPixmap(icon_path)
+            if not pix.isNull():
+                icon_label.setPixmap(
+                    pix.scaled(16, 16, QtCore.Qt.KeepAspectRatio,
+                               QtCore.Qt.SmoothTransformation)
+                )
+            else:
+                icon_label.setText("●")
+                icon_label.setStyleSheet("color: #aaa; font-size: 10px;")
+            container_row.addWidget(icon_label)
+
+        self.input = QtWidgets.QLineEdit()
+        self.input.setPlaceholderText(placeholder)
+        self.input.setFrame(False)
+        self.input.setFixedHeight(44)
+        if is_password:
+            self.input.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.input.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: transparent;
+                font-size: 14px;
+                color: #222;
+            }
+        """)
+        container_row.addWidget(self.input, 1)
+
+        if is_password:
+            self.eye_button = QtWidgets.QPushButton()
+            self.eye_button.setFixedSize(24, 24)
+            self.eye_button.setCursor(QtCore.Qt.PointingHandCursor)
+            self.eye_button.setStyleSheet("""
+                QPushButton {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            self._eye_icon_show = QtGui.QIcon("assets/icons/show-eye.svg")
+            self._eye_icon_hide = QtGui.QIcon("assets/icons/hide-eye.svg")
+            self.eye_button.setIcon(self._eye_icon_show)
+            self.eye_button.setIconSize(QtCore.QSize(18, 18))
+            self.eye_button.setCheckable(True)
+            self.eye_button.toggled.connect(self._toggle_visibility)
+            container_row.addWidget(self.eye_button)
+
+        row.addWidget(self.field_container)
+        outer.addLayout(row)
+
+        self.input.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.input:
+            if event.type() == QtCore.QEvent.FocusIn:
+                self.field_container.setStyleSheet("""
+                    QWidget#fieldContainer {
+                        background: white;
+                        border: 1.5px solid #0078D7;
+                        border-radius: 9px;
+                    }
+                """)
+            elif event.type() == QtCore.QEvent.FocusOut:
+                self.field_container.setStyleSheet("""
+                    QWidget#fieldContainer {
+                        background: white;
+                        border: 1.5px solid #dde3ec;
+                        border-radius: 9px;
+                    }
+                """)
+        return super().eventFilter(obj, event)
+
+    def _toggle_visibility(self, checked):
+        if checked:
+            self.input.setEchoMode(QtWidgets.QLineEdit.Normal)
+            self.eye_button.setIcon(self._eye_icon_hide)
+        else:
+            self.input.setEchoMode(QtWidgets.QLineEdit.Password)
+            self.eye_button.setIcon(self._eye_icon_show)
+
+    def text(self):
+        return self.input.text()
+
+    def setEnabled(self, enabled):
+        super().setEnabled(enabled)
+        self.input.setEnabled(enabled)
+        bg = "white" if enabled else "#f0f0f0"
+        self.field_container.setStyleSheet(f"""
+            QWidget#fieldContainer {{
+                background: {bg};
+                border: 1.5px solid #dde3ec;
+                border-radius: 9px;
+            }}
+        """)
+
+
 class LoginWindow(QtWidgets.QWidget):
     def __init__(self, on_success):
         super().__init__()
@@ -141,7 +286,7 @@ class LoginWindow(QtWidgets.QWidget):
         self.login_worker = None
 
         self.setWindowTitle("Авторизация")
-        self.setFixedSize(470, 370)
+        self.setFixedSize(460, 420)
         self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
@@ -149,33 +294,33 @@ class LoginWindow(QtWidgets.QWidget):
 
     def initUI(self):
         wrapper = QtWidgets.QWidget(self)
-        wrapper.setGeometry(0, 0, 470, 370)
+        wrapper.setObjectName("wrapper")
+        wrapper.setGeometry(0, 0, 460, 420)
         wrapper.setStyleSheet("""
-            QWidget {
-                background-color: #f5f5f5;
+            #wrapper {
+                background-color: #f7f9fc;
+                border: 1.2px solid #c7d2e0;
                 border-radius: 20px;
             }
         """)
 
         layout = QtWidgets.QVBoxLayout(wrapper)
         layout.setSpacing(10)
-        layout.setContentsMargins(10, 10, 10, 35)
+        layout.setContentsMargins(16, 10, 16, 20)
 
         top_bar = QtWidgets.QWidget()
         top_bar.setFixedHeight(40)
         top_bar.setStyleSheet("background: transparent;")
-
         top_bar.mousePressEvent = self._top_mouse_press
         top_bar.mouseMoveEvent = self._top_mouse_move
         top_bar.mouseReleaseEvent = self._top_mouse_release
 
         top = QtWidgets.QHBoxLayout(top_bar)
-        top.setContentsMargins(10, 0, 10, 0)
+        top.setContentsMargins(6, 0, 6, 0)
         top.setSpacing(8)
 
         brand = QtWidgets.QWidget()
         brand.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-
         brand_layout = QtWidgets.QHBoxLayout(brand)
         brand_layout.setContentsMargins(0, 0, 0, 0)
         brand_layout.setSpacing(8)
@@ -183,47 +328,30 @@ class LoginWindow(QtWidgets.QWidget):
         logo_label = QtWidgets.QLabel()
         logo_label.setFixedSize(36, 36)
         logo_label.setAlignment(QtCore.Qt.AlignCenter)
-
         logo_pixmap = QtGui.QPixmap("assets/logo.png")
         if not logo_pixmap.isNull():
             logo_label.setPixmap(
-                logo_pixmap.scaled(
-                    32, 32,
-                    QtCore.Qt.KeepAspectRatio,
-                    QtCore.Qt.SmoothTransformation
-                )
+                logo_pixmap.scaled(32, 32, QtCore.Qt.KeepAspectRatio,
+                                   QtCore.Qt.SmoothTransformation)
             )
         else:
             logo_label.setText("◉")
 
         app_label = QtWidgets.QLabel("RetinopatiaApp")
         app_label.setStyleSheet("""
-            QLabel {
-                color: #333;
-                font-size: 18px;
-                font-weight: bold;
-            }
+            QLabel { color: #333; font-size: 18px; font-weight: bold; }
         """)
 
         brand_layout.addWidget(logo_label)
         brand_layout.addWidget(app_label)
 
-        drag_area = QtWidgets.QWidget()
-        drag_area.setStyleSheet("background: transparent;")
-        drag_area.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-
         def window_button_style(kind):
             if kind == "close":
-                border = "#ff9c9c"
-                hover_bg = "#ffb1b1"
-                hover_border = "#ff7d7d"
-                icon_color = "#e42b2b"
+                border, hover_bg, hover_border, icon_color = \
+                    "#ff9c9c", "#ffb1b1", "#ff7d7d", "#e42b2b"
             else:
-                border = "#d2d9e7"
-                hover_bg = "#dbe3f2"
-                hover_border = "#b2c1d9"
-                icon_color = "#5a667c"
-
+                border, hover_bg, hover_border, icon_color = \
+                    "#d2d9e7", "#dbe3f2", "#b2c1d9", "#5a667c"
             return f"""
             QPushButton {{
                 background-color: white;
@@ -236,11 +364,9 @@ class LoginWindow(QtWidgets.QWidget):
                 background-color: {hover_bg};
                 border: 1px solid {hover_border};
             }}
-            QPushButton:pressed {{
-                background-color: #e5e7eb;
-            }}
+            QPushButton:pressed {{ background-color: #e5e7eb; }}
             """
-        
+
         def set_icon(button, path):
             icon = QtGui.QIcon(path)
             button.setIcon(icon)
@@ -263,32 +389,82 @@ class LoginWindow(QtWidgets.QWidget):
 
         top.addWidget(brand)
         top.addStretch(1)
-        top.addWidget(drag_area, 1)
         top.addWidget(minimize_button)
         top.addWidget(close_button)
 
         layout.addWidget(top_bar)
 
+        layout.addStretch(1)
+
         title_label = QtWidgets.QLabel("Вход в аккаунт")
         title_label.setAlignment(QtCore.Qt.AlignCenter)
-        title_label.setStyleSheet("font-size: 25px; font-weight: bold; color: #333;")
+        title_label.setStyleSheet(
+            "font-size: 24px; font-weight: bold; color: #1a1a2e;"
+        )
         layout.addWidget(title_label)
 
-        self.username_input = self.create_input("Логин")
-        self.password_input = self.create_input("Пароль", True)
+        layout.addSpacing(14)
 
-        layout.addWidget(self.username_input)
-        layout.addWidget(self.password_input)
+        form_widget = QtWidgets.QWidget()
+        form_widget.setStyleSheet("background: transparent;")
+        form_layout = QtWidgets.QVBoxLayout(form_widget)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(12)
+
+        self.username_input = IconLineEdit(
+            "Логин",
+            "Например, ivan_ivanov",
+            icon_path="assets/icons/user.svg",
+        )
+        self.password_input = IconLineEdit(
+            "Пароль",
+            "Введите пароль",
+            icon_path="assets/icons/lock.svg",
+            is_password=True,
+        )
+
+        form_layout.addWidget(self.username_input)
+        form_layout.addWidget(self.password_input)
+
+        extras_row = QtWidgets.QHBoxLayout()
+        extras_row.setContentsMargins(0, 0, 0, 0)
+
+        self.remember_checkbox = QtWidgets.QCheckBox("Запомнить меня")
+        self.remember_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 13px;
+                color: #444;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1.5px solid #0078D7;
+                background: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #0078D7;
+                border: 1.5px solid #0078D7;
+                image: url(assets/icons/checkmark.svg);
+            }
+        """)
+        self.remember_checkbox.setChecked(True)
+
+        extras_row.addWidget(self.remember_checkbox)
+
+        form_layout.addLayout(extras_row)
 
         self.login_button = SpinnerButton("Войти")
-        self.login_button.setFixedHeight(40)
+        self.login_button.setFixedHeight(44)
+        self.login_button.setCursor(QtCore.Qt.PointingHandCursor)
         self.login_button.setStyleSheet(self.button_style("#0078D7"))
         self.login_button.clicked.connect(self.login)
-        layout.addWidget(self.login_button)
+        form_layout.addWidget(self.login_button)
 
-        spacer = QtWidgets.QLabel()
-        spacer.setFixedHeight(20)
-        layout.addWidget(spacer)
+        layout.addWidget(form_widget)
+
+        layout.addStretch(1)
 
         wrapper.show()
 
@@ -302,7 +478,8 @@ class LoginWindow(QtWidgets.QWidget):
             self.old_pos = event.globalPos()
 
     def _top_mouse_move(self, event):
-        if hasattr(self, "old_pos") and self.old_pos and event.buttons() & QtCore.Qt.LeftButton:
+        if hasattr(self, "old_pos") and self.old_pos \
+                and event.buttons() & QtCore.Qt.LeftButton:
             delta = event.globalPos() - self.old_pos
             self.move(self.pos() + delta)
             self.old_pos = event.globalPos()
@@ -310,33 +487,15 @@ class LoginWindow(QtWidgets.QWidget):
     def _top_mouse_release(self, event):
         self.old_pos = None
 
-    def create_input(self, placeholder, is_password=False):
-        input_field = QtWidgets.QLineEdit()
-        input_field.setPlaceholderText(placeholder)
-        if is_password:
-            input_field.setEchoMode(QtWidgets.QLineEdit.Password)
-        input_field.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid #ddd;
-                border-radius: 8px;
-                padding: 8px;
-                font-size: 14px;
-            }
-            QLineEdit:focus { border: 2px solid #0078D7; }
-            QLineEdit:disabled {
-                background-color: #eeeeee;
-                color: #888;
-            }
-        """)
-        return input_field
-
     def button_style(self, color):
         return f"""
             QPushButton {{
                 background-color: {color};
                 color: white;
-                font-size: 16px;
-                border-radius: 8px;
+                font-size: 15px;
+                font-weight: 600;
+                border-radius: 9px;
+                letter-spacing: 0.5px;
             }}
             QPushButton:hover {{
                 background-color: {self.darken_color(color)};
@@ -353,15 +512,22 @@ class LoginWindow(QtWidgets.QWidget):
     def login(self):
         username = self.username_input.text().strip()
         password = self.password_input.text()
+        remember = self.remember_checkbox.isChecked()
 
         if not username or not password:
-            RoundedDialog.warning("Ошибка", "Одно из полей данных вашего аккаунта пустует.\nПожалуйста, заполните все поля до конца!")
+            RoundedDialog.warning(
+                "Ошибка",
+                "Одно из полей данных вашего аккаунта пустует.\n"
+                "Пожалуйста, заполните все поля до конца!"
+            )
             return
 
         self.set_loading(True)
 
-        self.login_worker = LoginWorker(username, password)
-        self.login_worker.done.connect(lambda ok, mode, msg: self._login_finished(ok, mode, msg, username))
+        self.login_worker = LoginWorker(username, password, remember)
+        self.login_worker.done.connect(
+            lambda ok, mode, msg: self._login_finished(ok, mode, msg, username)
+        )
         self.login_worker.finished.connect(self.login_worker.deleteLater)
         self.login_worker.start()
 
@@ -370,13 +536,11 @@ class LoginWindow(QtWidgets.QWidget):
             self.username_input.setEnabled(False)
             self.password_input.setEnabled(False)
             self.login_button.setSuccess()
-
             QtCore.QTimer.singleShot(
-                1000,
-                lambda: self._finish_success_login(username)
+                1000, lambda: self._finish_success_login(username)
             )
             return
-        
+
         self.login_button.setError()
 
         def after_error():
@@ -388,18 +552,19 @@ class LoginWindow(QtWidgets.QWidget):
                     "В этот момент просмотр контента приложения, его использование "
                     "или любые другие действия в нём недоступны."
                 )
-            if msg == "access_expired":
+            elif msg == "access_expired":
                 RoundedDialog.warning(
                     "Лицензия более недействительна",
                     "Срок действия доступа к приложению истёк.\n"
-                    "Чтобы продолжить использование приложения рекомендуется обратиться к администратору вашей организации!"
+                    "Чтобы продолжить использование приложения рекомендуется "
+                    "обратиться к администратору вашей организации!"
                 )
             else:
                 RoundedDialog.warning(
                     "Ошибка",
-                    "К сожалению, введённые вами данные неверны.\nПроверьте логин и пароль."
+                    "К сожалению, введённые вами данные неверны.\n"
+                    "Проверьте логин и пароль."
                 )
-
             self.set_loading(False)
 
         QtCore.QTimer.singleShot(900, after_error)
@@ -408,4 +573,3 @@ class LoginWindow(QtWidgets.QWidget):
         RoundedDialog.info("Успешно", "Вы успешно авторизовались в своём аккаунте!")
         self.on_success(username)
         self.close()
-

@@ -5,6 +5,9 @@ import onnxruntime as ort
 import torch
 import timm
 import torch.nn.functional as F
+import app_logger
+
+_log = app_logger.get("ml")
 
 STAGE_NAMES = ["0", "1", "2", "3", "4"] 
 
@@ -22,12 +25,17 @@ class LocalRetinaModel:
         pt_path = os.path.join(models_dir, "best_cls.pt")
 
         if not os.path.exists(onnx_path):
+            _log.error("Модель ONNX не найдена: %s", onnx_path)
             raise FileNotFoundError(f"Не найден {onnx_path}")
         if not os.path.exists(pt_path):
+            _log.error("Модель PyTorch не найдена: %s", pt_path)
             raise FileNotFoundError(f"Не найден {pt_path}")
 
+        _log.info("Загрузка ONNX модели: %s", onnx_path)
         self.ort_sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        _log.info("Загрузка PyTorch модели: %s (device=%s)", pt_path, self.device)
         self.torch_model = timm.create_model("tf_efficientnet_b0", pretrained=False, num_classes=5)
         sd = torch.load(pt_path, map_location="cpu")
         self.torch_model.load_state_dict(sd)
@@ -36,6 +44,7 @@ class LocalRetinaModel:
         self._act = None
         self._grad = None
         self._hooks_set = False
+        _log.info("Модели успешно загружены")
 
     def _ensure_hooks(self):
         if self._hooks_set:
@@ -66,10 +75,12 @@ class LocalRetinaModel:
         return torch.from_numpy(x)
 
     def predict_stage(self, image_path: str):
+        _log.debug("predict_stage: %s", image_path)
         x = self._preprocess_np(image_path, 224)
-        logits = self.ort_sess.run(None, {"image": x})[0][0] 
+        logits = self.ort_sess.run(None, {"image": x})[0][0]
         probs = _softmax(logits)
         stage_id = int(np.argmax(probs))
+        _log.debug("predict_stage result: stage=%d, p_max=%.3f", stage_id, float(probs[stage_id]))
         return stage_id, probs
 
     def gradcam_heatmap(self, image_path: str, class_idx: int | None = None) -> np.ndarray:
@@ -98,5 +109,10 @@ _model: LocalRetinaModel | None = None
 def get_model() -> LocalRetinaModel:
     global _model
     if _model is None:
-        _model = LocalRetinaModel(models_dir="models")
+        _log.info("Инициализация LocalRetinaModel")
+        try:
+            _model = LocalRetinaModel(models_dir="models")
+        except Exception:
+            _log.critical("Не удалось загрузить модели", exc_info=True)
+            raise
     return _model

@@ -3,7 +3,11 @@ from typing import Optional, Dict, Any, List
 import os
 import json
 
+import app_logger
+
 BASE_URL = "https://retinoserver.vercel.app"
+
+_log = app_logger.get("api")
 
 _timeout = 10
 _token: Optional[str] = None
@@ -19,6 +23,7 @@ def _load_token() -> Optional[str]:
             data = json.load(f)
         return data.get("token")
     except Exception:
+        _log.warning("Не удалось прочитать файл токена: %s", _TOKEN_FILE, exc_info=True)
         return None
 
 
@@ -27,7 +32,7 @@ def _save_token(token: str, username: str = "") -> None:
         with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
             json.dump({"token": token, "username": username}, f, ensure_ascii=False)
     except Exception:
-        pass
+        _log.warning("Не удалось сохранить токен в файл: %s", _TOKEN_FILE, exc_info=True)
 
 
 def get_saved_session_username() -> Optional[str]:
@@ -39,6 +44,7 @@ def get_saved_session_username() -> Optional[str]:
         username = (data.get("username") or "").strip()
         return username or None
     except Exception:
+        _log.debug("Не удалось прочитать имя пользователя из файла токена", exc_info=True)
         return None
 
 
@@ -47,7 +53,7 @@ def _clear_token() -> None:
         if os.path.exists(_TOKEN_FILE):
             os.remove(_TOKEN_FILE)
     except Exception:
-        pass
+        _log.debug("Не удалось удалить файл токена", exc_info=True)
 
 
 _token = _load_token()
@@ -107,7 +113,7 @@ def username_status(username: str) -> str:
     return "unknown"
 
 
-def authenticate_user(username: str, password: str):
+def authenticate_user(username: str, password: str, remember: bool = True):
     global _token
     try:
         r = requests.post(
@@ -120,8 +126,13 @@ def authenticate_user(username: str, password: str):
         if r.status_code == 200:
             data = r.json()
             _token = data.get("token")
+
             if _token:
-                _save_token(_token, data.get("username", username))
+                if remember:
+                    _save_token(_token, data.get("username", username))
+                else:
+                    _clear_token()
+
                 return True, ""
 
         try:
@@ -137,7 +148,8 @@ def authenticate_user(username: str, password: str):
 
         return False, "invalid_credentials"
 
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as exc:
+        _log.warning("Сетевая ошибка при авторизации: %s", exc)
         _token = None
         _clear_token()
         return False, "network_error"
@@ -151,7 +163,7 @@ def logout() -> None:
             timeout=_timeout,
         )
     except Exception:
-        pass
+        _log.debug("Сетевая ошибка при выходе из аккаунта (игнорируется)", exc_info=True)
 
     _token = None
     _clear_token()
@@ -253,11 +265,13 @@ def check_saved_session():
         profile = get_profile()
 
         if not profile or not profile.get("ok") or not profile.get("username"):
+            _log.debug("Сохранённая сессия недействительна (профиль не получен)")
             clear_saved_session()
             return False, None, "invalid_session"
 
         return True, profile.get("username"), ""
 
     except Exception:
+        _log.warning("Ошибка при проверке сохранённой сессии", exc_info=True)
         clear_saved_session()
         return False, None, "invalid_session"

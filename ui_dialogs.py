@@ -1,6 +1,9 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from api_client import change_password
 from ui_styles import window_button_style, set_icon
+import app_logger
+
+_log = app_logger.get("dialogs")
 
 class RoundedDialog(QtWidgets.QDialog):
     def __init__(self, title: str, text: str, kind: str = "info"):
@@ -506,6 +509,7 @@ class ChangePasswordDialog(QtWidgets.QDialog):
 
         self.username = username
         self._drag_pos = None
+        self._change_worker = None
 
         self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.Dialog)
         self.setModal(True)
@@ -606,9 +610,9 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         btns = QtWidgets.QHBoxLayout()
         btns.setSpacing(10)
 
-        cancel = QtWidgets.QPushButton("Отмена")
-        cancel.setFixedHeight(40)
-        cancel.setStyleSheet("""
+        self._cancel_btn = QtWidgets.QPushButton("Отмена")
+        self._cancel_btn.setFixedHeight(40)
+        self._cancel_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f3f3f3;
                 color: #222;
@@ -619,11 +623,11 @@ class ChangePasswordDialog(QtWidgets.QDialog):
             }
             QPushButton:hover { background-color: #e9e9e9; }
         """)
-        cancel.clicked.connect(self.reject)
+        self._cancel_btn.clicked.connect(self.reject)
 
-        save_btn = QtWidgets.QPushButton("Сохранить")
-        save_btn.setFixedHeight(40)
-        save_btn.setStyleSheet("""
+        self._save_btn = QtWidgets.QPushButton("Сохранить")
+        self._save_btn.setFixedHeight(40)
+        self._save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #0078D7;
                 color: white;
@@ -633,11 +637,12 @@ class ChangePasswordDialog(QtWidgets.QDialog):
                 font-weight: 800;
             }
             QPushButton:hover { background-color: #005499; }
+            QPushButton:disabled { background-color: #b9c6d3; }
         """)
-        save_btn.clicked.connect(self._save)
+        self._save_btn.clicked.connect(self._save)
 
-        btns.addWidget(cancel)
-        btns.addWidget(save_btn)
+        btns.addWidget(self._cancel_btn)
+        btns.addWidget(self._save_btn)
         layout.addLayout(btns)
 
         root.addWidget(self.card)
@@ -669,9 +674,15 @@ class ChangePasswordDialog(QtWidgets.QDialog):
     def _header_mouse_release(self, event):
         self._drag_pos = None
 
-    def _save(self):
-        from ui_dialogs import RoundedDialog
+    def _set_loading(self, loading: bool):
+        self.old_input.setEnabled(not loading)
+        self.new_input.setEnabled(not loading)
+        self.repeat_input.setEnabled(not loading)
+        self._save_btn.setEnabled(not loading)
+        self._cancel_btn.setEnabled(not loading)
+        self._save_btn.setText("Сохранение…" if loading else "Сохранить")
 
+    def _save(self):
         old_pw = self.old_input.text().strip()
         new_pw = self.new_input.text().strip()
         rep_pw = self.repeat_input.text().strip()
@@ -688,12 +699,27 @@ class ChangePasswordDialog(QtWidgets.QDialog):
             RoundedDialog.warning("Ошибка", "Новый пароль и повтор не совпадают.")
             return
 
-        if not change_password(self.username, old_pw, new_pw):
-            RoundedDialog.warning("Ошибка", "Текущий пароль введён неверно (или вы не авторизованы).")
-            return
+        self._set_loading(True)
 
-        RoundedDialog.info("Готово", "Пароль успешно изменён.")
-        self.accept()
+        import functools
+        fn = functools.partial(change_password, self.username, old_pw, new_pw)
+        self._change_worker = ApiWorker(fn)
+        self._change_worker.ok.connect(self._on_change_ok)
+        self._change_worker.fail.connect(self._on_change_fail)
+        self._change_worker.finished.connect(self._change_worker.deleteLater)
+        self._change_worker.start()
+
+    def _on_change_ok(self, result: bool):
+        self._set_loading(False)
+        if result:
+            RoundedDialog.info("Готово", "Пароль успешно изменён.")
+            self.accept()
+        else:
+            RoundedDialog.warning("Ошибка", "Текущий пароль введён неверно (или вы не авторизованы).")
+
+    def _on_change_fail(self, err: str):
+        self._set_loading(False)
+        RoundedDialog.warning("Ошибка", f"Не удалось сменить пароль.\nПроверьте соединение с сервером.")
 
     @staticmethod
     def run(parent, username: str) -> bool:
@@ -703,8 +729,8 @@ class ChangePasswordDialog(QtWidgets.QDialog):
         return d.exec_() == QtWidgets.QDialog.Accepted
     
 class ApiWorker(QtCore.QThread):
-    ok = QtCore.pyqtSignal(object)      # результат
-    fail = QtCore.pyqtSignal(str)       # ошибка
+    ok = QtCore.pyqtSignal(object)
+    fail = QtCore.pyqtSignal(str)
 
     def __init__(self, fn, *args, **kwargs):
         super().__init__()
@@ -713,8 +739,10 @@ class ApiWorker(QtCore.QThread):
         self._kwargs = kwargs
 
     def run(self):
+        fn_name = getattr(self._fn, "__name__", repr(self._fn))
         try:
             res = self._fn(*self._args, **self._kwargs)
             self.ok.emit(res)
         except Exception as e:
+            _log.debug("ApiWorker ошибка [%s]: %s", fn_name, e, exc_info=True)
             self.fail.emit(str(e))
