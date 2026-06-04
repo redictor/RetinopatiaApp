@@ -20,6 +20,7 @@ from screens.home_screen import HomeScreen
 from screens.training_screen import TrainingScreen
 from screens.stats_screen import StatsScreen
 from screens.settings_screen import SettingsScreen
+from screens.history_screen import HistoryScreen
 
 _log = app_logger.get("window")
 
@@ -119,7 +120,11 @@ class MainWindow(QtWidgets.QWidget):
         sidebar = QtWidgets.QFrame()
         sidebar.setFixedWidth(240)
         sidebar.setStyleSheet("""
-            QFrame { background-color: #ffffff; border-radius: 16px; }
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #dfe7f1;
+                border-radius: 16px;
+            }
         """)
 
         side_layout = QtWidgets.QVBoxLayout(sidebar)
@@ -140,6 +145,10 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_stats.clicked.connect(lambda: self.set_page(2))
         side_layout.addWidget(self.btn_stats)
 
+        self.btn_history = self.menu_button("История", "assets/icons/history.png")
+        self.btn_history.clicked.connect(lambda: self.set_page(3))
+        side_layout.addWidget(self.btn_history)
+
         side_layout.addStretch(1)
 
         line = QtWidgets.QFrame()
@@ -149,7 +158,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.btn_settings = self.menu_button("Настройки", "assets/icons/settings.png")
         self.btn_settings.setChecked(False)
-        self.btn_settings.clicked.connect(lambda: self.set_page(3))
+        self.btn_settings.clicked.connect(lambda: self.set_page(4))
         side_layout.addWidget(self.btn_settings)
 
         content = QtWidgets.QFrame()
@@ -164,19 +173,25 @@ class MainWindow(QtWidgets.QWidget):
         self.home_screen = HomeScreen(self.username)
         self.training_screen = TrainingScreen(on_save_record=self._stats_append)
         self.stats_screen = StatsScreen()
+        self.history_screen = HistoryScreen()
         self.settings_screen = SettingsScreen(self.username)
 
         self.home_screen.btn_start_training.clicked.connect(lambda: self.set_page(1))
         self.home_screen.btn_open_stats.clicked.connect(lambda: self.set_page(2))
-        self.home_screen.btn_open_settings.clicked.connect(lambda: self.set_page(3))
+        self.home_screen.btn_open_history.clicked.connect(lambda: self.set_page(3))
+        self.home_screen.btn_open_settings.clicked.connect(lambda: self.set_page(4))
 
         self.settings_screen.logout_requested.connect(self._do_logout)
         self.settings_screen.stats_reset.connect(self._refresh_stats_and_home)
+
+        self.settings_screen.refresh_requested.connect(self._refresh_stats_and_home)
+        self.settings_screen.refresh_requested.connect(self._load_account_status_async)
 
         self.pages = QtWidgets.QStackedWidget()
         self.pages.addWidget(self.home_screen)
         self.pages.addWidget(self.training_screen)
         self.pages.addWidget(self.stats_screen)
+        self.pages.addWidget(self.history_screen)
         self.pages.addWidget(self.settings_screen)
         self.pages.setStyleSheet("""
             QWidget { background: transparent; }
@@ -196,7 +211,8 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_home.setChecked(index == 0)
         self.btn_training.setChecked(index == 1)
         self.btn_stats.setChecked(index == 2)
-        self.btn_settings.setChecked(index == 3)
+        self.btn_history.setChecked(index == 3)
+        self.btn_settings.setChecked(index == 4)
 
     def menu_button(self, text: str, icon_path: str) -> QtWidgets.QPushButton:
         btn = QtWidgets.QPushButton(text)
@@ -206,11 +222,28 @@ class MainWindow(QtWidgets.QWidget):
         btn.setCursor(QtCore.Qt.PointingHandCursor)
         btn.setStyleSheet("""
             QPushButton {
-                text-align: left; padding-left: 14px; padding-right: 12px;
-                font-size: 14px; border: none; border-radius: 10px; color: #222;
+                text-align: left;
+                padding-left: 14px;
+                padding-right: 12px;
+                font-size: 14px;
+                color: #222;
+
+                background: #ffffff;
+
+                border: 1px solid #e4ebf3;
+                border-radius: 12px;
             }
-            QPushButton:hover  { background-color: #f3f3f3; }
-            QPushButton:checked { background-color: #0078D7; color: white; }
+
+            QPushButton:hover {
+                background: #f8fbff;
+                border: 1px solid #b8d9ff;
+            }
+
+            QPushButton:checked {
+                background: #0078D7;
+                color: white;
+                border: 1px solid #0078D7;
+            }
         """)
         btn.setCheckable(True)
         return btn
@@ -257,6 +290,7 @@ class MainWindow(QtWidgets.QWidget):
         w = ApiWorker(get_training_history, 2000)
         w.ok.connect(self.home_screen.apply_stats)
         w.ok.connect(self.stats_screen.apply_data)
+        w.ok.connect(self.history_screen.apply_data)
         w.fail.connect(lambda err: _log.warning("Ошибка загрузки статистики: %s", err))
         w.finished.connect(w.deleteLater)
         w.start()

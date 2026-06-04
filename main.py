@@ -4,7 +4,7 @@ import time
 import app_logger
 
 venv_dir = os.path.dirname(os.path.dirname(sys.executable))
-current_v = "0.6.0"
+current_v = "0.7.0"
 
 qt_plugins = os.path.join(
     venv_dir,

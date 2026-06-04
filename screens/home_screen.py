@@ -180,10 +180,12 @@ class HomeScreen(QtWidgets.QWidget):
 
         self.btn_start_training = big_action("Начать обучение", "assets/icons/training.png", primary=True)
         self.btn_open_stats = big_action("Открыть статистику", "assets/icons/stats.png", primary=False)
+        self.btn_open_history = big_action("Открыть историю", "assets/icons/history.png", primary=False)
         self.btn_open_settings = big_action("Настройки", "assets/icons/settings.png", primary=False)
 
         ab.addWidget(self.btn_start_training)
         ab.addWidget(self.btn_open_stats)
+        ab.addWidget(self.btn_open_history)
         ab.addWidget(self.btn_open_settings)
 
         l.addWidget(actions_box)
@@ -197,7 +199,7 @@ class HomeScreen(QtWidgets.QWidget):
         ul.setContentsMargins(16, 14, 16, 14)
         ul.setSpacing(10)
 
-        updates_title = QtWidgets.QLabel("Что нового")
+        updates_title = QtWidgets.QLabel("Список обновлений")
         updates_title.setStyleSheet("font-size:14px;font-weight:800;color:#222;border:none;background:transparent;")
         ul.addWidget(updates_title)
 
@@ -236,8 +238,40 @@ class HomeScreen(QtWidgets.QWidget):
 
         il.addStretch(1)
         scroll.setWidget(inner)
+
+        self.updates_scroll = scroll
+
+        self.updates_scroll_anim = QtCore.QPropertyAnimation(
+            scroll.verticalScrollBar(),
+            b"value",
+            self
+        )
+        self.updates_scroll_anim.setDuration(580)
+        self.updates_scroll_anim.setEasingCurve(QtCore.QEasingCurve.OutQuart)
+
+        scroll.viewport().installEventFilter(self)
+
         ul.addWidget(scroll, 1)
         l.addWidget(updates_frame, 1)
+
+    def eventFilter(self, obj, event):
+        if obj == self.updates_scroll.viewport() and event.type() == QtCore.QEvent.Wheel:
+            bar = self.updates_scroll.verticalScrollBar()
+
+            current = bar.value()
+            delta = event.angleDelta().y()
+
+            target = current - delta
+            target = max(bar.minimum(), min(bar.maximum(), target))
+
+            self.updates_scroll_anim.stop()
+            self.updates_scroll_anim.setStartValue(current)
+            self.updates_scroll_anim.setEndValue(target)
+            self.updates_scroll_anim.start()
+
+            return True
+
+        return super().eventFilter(obj, event)
 
     def apply_stats(self, data):
         try:

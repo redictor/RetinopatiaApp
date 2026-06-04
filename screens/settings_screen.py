@@ -12,6 +12,7 @@ _log = app_logger.get("screens.settings")
 class SettingsScreen(QtWidgets.QWidget):
     logout_requested = pyqtSignal()
     stats_reset = pyqtSignal()
+    refresh_requested = QtCore.pyqtSignal()
 
     def __init__(self, username: str, parent=None):
         super().__init__(parent)
@@ -180,6 +181,19 @@ class SettingsScreen(QtWidgets.QWidget):
         """)
         logout_btn.clicked.connect(self._logout_action)
         l.addWidget(logout_btn, alignment=QtCore.Qt.AlignLeft)
+
+        self.btn_refresh_data = QtWidgets.QPushButton("Обновить данные")
+        self.btn_refresh_data.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_refresh_data.setFixedHeight(38)
+        self.btn_refresh_data.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f3f3; color: #222; border: none;
+                border-radius: 10px; font-size: 13px; font-weight: 700; padding: 0 14px;
+            }
+            QPushButton:hover { background-color: #e7e7e7; }
+        """)
+        self.btn_refresh_data.clicked.connect(self.refresh_requested.emit)
+        l.addWidget(self.btn_refresh_data, alignment=QtCore.Qt.AlignLeft)
 
         l.addStretch(1)
 

@@ -279,35 +279,63 @@ class StatsScreen(QtWidgets.QWidget):
 
     def apply_data(self, data):
         try:
-            data = data or []
+            data = list(data or [])
+
+            data.sort(
+                key=lambda x: int(x.get("training_number", 0) or 0),
+                reverse=True
+            )
+
+            latest_20 = data[:20]
+            latest_20.reverse()
 
             scores = []
             dices = []
             dates = []
             ids = []
 
-            for item in data:
+            for item in latest_20:
                 try:
                     scores.append(float(item.get("score", 0)))
                 except (ValueError, TypeError):
-                    pass
+                    scores.append(0)
+
                 try:
                     dices.append(float(item.get("dice", 0.0)))
                 except (ValueError, TypeError):
-                    pass
+                    dices.append(0.0)
+
                 dates.append(
                     item.get("created_at") or item.get("date") or item.get("ts") or "-"
                 )
-                ids.append(item.get("id") or "-")
+
+                ids.append(item.get("training_number") or "-")
 
             total = len(data)
-            avg_score = sum(scores) / len(scores) if scores else 0.0
-            avg_dice = sum(dices) / len(dices) if dices else 0.0
+
+            all_scores = []
+            all_dices = []
+
+            for item in data:
+                try:
+                    all_scores.append(float(item.get("score", 0)))
+                except (ValueError, TypeError):
+                    pass
+
+                try:
+                    all_dices.append(float(item.get("dice", 0.0)))
+                except (ValueError, TypeError):
+                    pass
+
+            avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
+            avg_dice = sum(all_dices) / len(all_dices) if all_dices else 0.0
 
             self.stats_total_lbl.setText(str(total))
             self.stats_avg_score_lbl.setText(f"{avg_score:.1f}/5")
             self.stats_avg_dice_lbl.setText(f"{avg_dice:.2f}")
-            self.stats_chart.set_series(scores[-20:], [], dates[-20:], ids[-20:])
-            self.stats_chart.set_target_level(int(avg_score + 0.5) if scores else None)
+
+            self.stats_chart.set_series(scores, [], dates, ids)
+            self.stats_chart.set_target_level(int(avg_score + 0.5) if all_scores else None)
+
         except Exception:
             _log.error("Ошибка применения данных на экран статистики", exc_info=True)

@@ -2,16 +2,44 @@ import requests
 from typing import Optional, Dict, Any, List
 import os
 import json
-
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import app_logger
 
 BASE_URL = "https://retinoserver.vercel.app"
 
+_timeout = (5, 25)
+_session = requests.Session()
+_retry = Retry(
+    total=2,
+    connect=2,
+    read=2,
+    backoff_factor=0.7,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=("GET", "POST")
+)
+_adapter = HTTPAdapter(max_retries=_retry)
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
+
+class NetworkError(Exception):
+    pass
+
+def _request(method, url, **kwargs):
+    kwargs.setdefault("timeout", _timeout)
+
+    try:
+        return _session.request(method, url, **kwargs)
+    except requests.exceptions.Timeout:
+        raise NetworkError("Сервер долго не отвечает. Проверьте интернет или попробуйте позже.")
+    except requests.exceptions.ConnectionError:
+        raise NetworkError("Нет соединения с сервером. Проверьте интернет.")
+    except requests.exceptions.RequestException as exc:
+        raise NetworkError(f"Ошибка сети: {exc}")
+
 _log = app_logger.get("api")
 
-_timeout = 10
 _token: Optional[str] = None
-
 _TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_token.json")
 
 
@@ -67,7 +95,8 @@ def _headers() -> Dict[str, str]:
 
 
 def register_user(username: str, password: str):
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/auth/register",
         json={"username": username, "password": password},
         headers=_headers(),
@@ -98,7 +127,8 @@ def register_user(username: str, password: str):
 
 
 def username_status(username: str) -> str:
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/auth/username_status",
         json={"username": username},
         headers=_headers(),
@@ -116,7 +146,8 @@ def username_status(username: str) -> str:
 def authenticate_user(username: str, password: str, remember: bool = True):
     global _token
     try:
-        r = requests.post(
+        r = _request(
+            "POST",
             f"{BASE_URL}/auth/login",
             json={"username": username, "password": password},
             headers={"Content-Type": "application/json"},
@@ -148,7 +179,7 @@ def authenticate_user(username: str, password: str, remember: bool = True):
 
         return False, "invalid_credentials"
 
-    except requests.exceptions.RequestException as exc:
+    except NetworkError as exc:
         _log.warning("Сетевая ошибка при авторизации: %s", exc)
         _token = None
         _clear_token()
@@ -157,7 +188,8 @@ def authenticate_user(username: str, password: str, remember: bool = True):
 def logout() -> None:
     global _token
     try:
-        requests.post(
+        _request(
+            "POST",
             f"{BASE_URL}/auth/logout",
             headers=_headers(),
             timeout=_timeout,
@@ -169,7 +201,8 @@ def logout() -> None:
     _clear_token()
 
 def change_password(username: str, old_password: str, new_password: str) -> bool:
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/auth/change_password",
         json={"username": username, "old_password": old_password, "new_password": new_password},
         headers=_headers(),
@@ -179,7 +212,8 @@ def change_password(username: str, old_password: str, new_password: str) -> bool
 
 
 def delete_user_soft(confirm_phrase: str = "delete my account") -> bool:
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/auth/delete_user",
         json={"confirm": confirm_phrase},
         headers=_headers(),
@@ -187,13 +221,14 @@ def delete_user_soft(confirm_phrase: str = "delete my account") -> bool:
     )
     return r.status_code == 200
 
-def get_updates() -> List[Dict[str, Any]]:
-    r = requests.get(f"{BASE_URL}/public/updates", headers=_headers(), timeout=_timeout)
-    r.raise_for_status()
-    data = r.json()
-    if isinstance(data, list):
-        return data
-    return []
+def get_updates():
+    try:
+        r = _request("GET", f"{BASE_URL}/public/updates", headers=_headers())
+        if r.status_code != 200:
+            return []
+        return r.json()
+    except NetworkError:
+        return []
 
 def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float, p_max: float, ts: Optional[str] = None) -> bool:
     payload = {
@@ -206,7 +241,8 @@ def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float
     if ts:
         payload["ts"] = ts
 
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/training/record",
         json=payload,
         headers=_headers(),
@@ -214,20 +250,23 @@ def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float
     )
     return r.status_code == 200
 
-def get_training_history(limit: int = 2000) -> List[Dict[str, Any]]:
-    r = requests.get(
-        f"{BASE_URL}/training/history",
-        params={"limit": int(limit)},
-        headers=_headers(),
-        timeout=_timeout,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return data if isinstance(data, list) else []
+def get_training_history(limit=2000):
+    try:
+        r = _request(
+            "GET",
+            f"{BASE_URL}/training/history",
+            headers=_headers(),
+            params={"limit": limit}
+        )
+        if r.status_code != 200:
+            return []
+        return r.json()
+    except NetworkError:
+        return []
 
 
 def get_maintenance_status() -> Dict[str, Any]:
-    r = requests.get(f"{BASE_URL}/status/maintenance", headers=_headers(), timeout=_timeout)
+    r = _request("GET", f"{BASE_URL}/status/maintenance", headers=_headers(), timeout=_timeout)
     r.raise_for_status()
     data = r.json()
     if isinstance(data, dict):
@@ -235,7 +274,8 @@ def get_maintenance_status() -> Dict[str, Any]:
     return {"enabled": False, "message": ""}
 
 def reset_training_history() -> bool:
-    r = requests.post(
+    r = _request(
+        "POST",
         f"{BASE_URL}/training/reset",
         headers=_headers(),
         timeout=_timeout,
@@ -243,12 +283,17 @@ def reset_training_history() -> bool:
     return r.status_code == 200
 
 def get_profile():
-    r = requests.get(
-        f"{BASE_URL}/auth/profile",
-        headers=_headers(),
-        timeout=_timeout,
-    )
-    return r.json() if r.status_code == 200 else None
+    try:
+        r = _request(
+            "GET",
+            f"{BASE_URL}/auth/profile",
+            headers=_headers(),
+        )
+        return r.json() if r.status_code == 200 else None
+    except NetworkError:
+        raise
+    except Exception:
+        return None
 
 def has_saved_session() -> bool:
     return bool(_token)
@@ -259,19 +304,23 @@ def clear_saved_session() -> None:
     _token = None
     _clear_token()
 
-
 def check_saved_session():
+    username = get_saved_session_username()
+    token = _load_token()
+
+    if not username or not token:
+        return False, username, "no_session"
+
     try:
         profile = get_profile()
+        if profile:
+            return True, username, "ok"
 
-        if not profile or not profile.get("ok") or not profile.get("username"):
-            _log.debug("Сохранённая сессия недействительна (профиль не получен)")
-            clear_saved_session()
-            return False, None, "invalid_session"
+        return False, username, "invalid_session"
 
-        return True, profile.get("username"), ""
+    except NetworkError:
+        return True, username, "network_error"
 
     except Exception:
         _log.warning("Ошибка при проверке сохранённой сессии", exc_info=True)
-        clear_saved_session()
-        return False, None, "invalid_session"
+        return False, username, "invalid_session"
