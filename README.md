@@ -105,7 +105,11 @@ Core functionality is implemented, while UI, performance, and training scenarios
 
 ## License
 
-This project is licensed under the **MIT License**.
+This project is licensed under the **RetinopatiaApp Non-Commercial License**.
+
+The source code may be viewed, studied, modified, and used for personal or educational purposes. Commercial use, distribution, or incorporation into commercial products or services requires prior written permission from the copyright holder.
+See the [LICENSE](LICENSE) file for the full license text.
+
 
 ---
 
