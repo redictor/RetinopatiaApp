@@ -27,3 +27,8 @@ logs/
 *.temp
 
 auth_token.json
+
+language_settings.json
+dev_mode.json
+.env
+.env.*

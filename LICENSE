@@ -1,21 +1,57 @@
-MIT License
+Custom Non-Commercial License
 
-Copyright (c) 2026 redictor
+Copyright (c) 2026 Andrew Tyurin (Redictor)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is granted to view, study, download, and modify the source code of
+RetinopatiaApp ("the Software") for personal, educational, and non-commercial
+purposes only, subject to the conditions below.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may:
+
+- view and study the source code;
+- run the Software for personal or educational purposes;
+- modify the source code for personal or educational purposes;
+- share the original, unmodified source code, provided that this license and
+  the original copyright notice are retained in full;
+- submit patches, bug fixes, or improvements back to the original project
+  (e.g. via pull request), which the copyright holder may accept at their
+  sole discretion.
+
+You may not:
+
+- use the Software or its source code, in whole or in part, for any
+  commercial purpose, including but not limited to selling, licensing,
+  renting, or offering it as a paid service (SaaS, B2B, or otherwise);
+- create, distribute, host, or offer any derivative work, fork, or modified
+  version of the Software — publicly or privately, free or paid — without
+  prior written permission from the copyright holder;
+- remove, disable, or circumvent any authentication, licensing, or access
+  control mechanisms contained in the Software;
+- remove or alter copyright notices, or represent the Software (or any
+  derivative of it) as your own original work;
+- use the name "RetinopatiaApp", the author's name, or associated branding to
+  promote a derivative product or service without permission.
+
+Permissions
+
+Any use not expressly permitted by this license — including any commercial
+use or distribution of derivative works — requires prior written permission
+from the copyright holder. Contact: Andrew Tyurin (Redictor).
+
+Disclaimer
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Governing Law
+
+This license shall be governed by and construed in accordance with the laws
+of the Russian Federation, without regard to its conflict of law provisions.
+
+Copyright holder: Andrew Tyurin (Redictor)
+Contact: support.retinopatia.app@gmail.com

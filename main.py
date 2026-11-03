@@ -2,9 +2,14 @@ import os
 import sys
 import time
 import app_logger
+import i18n
+from ui_theme import AccentTheme, ACCENTS, BLUE
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(APP_DIR)
 
 venv_dir = os.path.dirname(os.path.dirname(sys.executable))
-current_v = "0.7.0"
+current_v = "0.9.0"
 
 qt_plugins = os.path.join(
     venv_dir,
@@ -18,8 +23,8 @@ qt_plugins = os.path.join(
 platforms = os.path.join(qt_plugins, "platforms")
 
 from PyQt5 import QtWidgets, QtCore, QtGui
-from ui_dialogs import ConfirmDialog, RoundedDialog
-from login_window import LoginWindow
+from dialogs.ui_dialogs import ConfirmDialog, RoundedDialog, ApiWorker
+from windows.login_window import LoginWindow
 from api_client import check_saved_session, get_saved_session_username, clear_saved_session
 
 class StartupWorker(QtCore.QThread):
@@ -27,23 +32,24 @@ class StartupWorker(QtCore.QThread):
     done = QtCore.pyqtSignal()
 
     def run(self):
-        self.step.emit(15, "Запуск…")
+        self.step.emit(15, i18n.t("startup.starting"))
         self.msleep(520)
 
-        self.step.emit(45, "Проверка соединения…")
+        self.step.emit(45, i18n.t("startup.checking_connection"))
         self.msleep(800)
 
-        self.step.emit(75, "Проверка сессии…")
+        self.step.emit(75, i18n.t("startup.checking_session"))
+
         try:
             get_saved_session_username()
         except Exception:
             pass
+
         self.msleep(800)
 
-        self.step.emit(100, "Готово")
+        self.step.emit(100, i18n.t("startup.ready"))
         self.msleep(360)
         self.done.emit()
-
 
 class StartupWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -124,28 +130,23 @@ class StartupWindow(QtWidgets.QWidget):
                     QtCore.Qt.SmoothTransformation
                 )
             )
-        else:
-            logo_label.setText("◉")
-            logo_label.setStyleSheet("QLabel { color:#0078D7; font-size:44px; font-weight:900; }")
 
         layout.addWidget(logo_label)
         layout.addSpacing(16)
 
-        # --- название ---
         app_label = QtWidgets.QLabel("RetinopatiaApp")
         app_label.setAlignment(QtCore.Qt.AlignCenter)
         app_label.setStyleSheet("QLabel { color:#222; font-size:25px; font-weight:bold; }")
         layout.addWidget(app_label)
         layout.addSpacing(22)
 
-        # --- строка статуса: текст слева, проценты справа ---
         status_row = QtWidgets.QWidget()
         status_row.setStyleSheet("background: transparent;")
         status_layout = QtWidgets.QHBoxLayout(status_row)
         status_layout.setContentsMargins(2, 0, 2, 0)
         status_layout.setSpacing(8)
 
-        self.loading_label = QtWidgets.QLabel("Запуск…")
+        self.loading_label = QtWidgets.QLabel(i18n.t("startup.starting"))
         self.loading_label.setStyleSheet("QLabel { color:#7b828d; font-size:13px; }")
 
         self.pct_label = QtWidgets.QLabel("0%")
@@ -157,7 +158,6 @@ class StartupWindow(QtWidgets.QWidget):
         layout.addWidget(status_row)
         layout.addSpacing(9)
 
-        # --- прогресс-бар (детерминированный) ---
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -178,7 +178,6 @@ class StartupWindow(QtWidgets.QWidget):
 
         layout.addStretch(1)
 
-        # --- версия снизу ---
         version_label = QtWidgets.QLabel(f"v{current_v}")
         version_label.setAlignment(QtCore.Qt.AlignCenter)
         version_label.setStyleSheet("QLabel { color:#aab0bb; font-size:11px; }")
@@ -187,7 +186,6 @@ class StartupWindow(QtWidgets.QWidget):
         self.fade_to_widget(wrapper)
 
     def set_progress(self, value, text=None):
-        """Плавно подводит бар к value (0..100) и обновляет статус/проценты."""
         if self.progress is None:
             return
         if text and self.loading_label is not None:
@@ -214,6 +212,7 @@ class AppController:
         self.startup_fade_out = None
         self.startup_worker = None
         self._startup_t0 = 0.0
+        self._session_worker = None
 
     def start(self):
         _log.info("RetinopatiaApp v%s запускается", current_v)
@@ -237,36 +236,20 @@ class AppController:
         _log.debug("Проверка сохранённой сессии, username=%s", saved_username)
 
         def continue_flow():
-            if self.startup_window is not None:
-                self.startup_window.close()
-                self.startup_window = None
-
             if saved_username:
                 if ConfirmDialog.ask(
-                    "Найдена прошлая сессия",
-                    f"В последний раз вы входили в приложение через аккаунт {saved_username}. Хотите продолжить работу в этом аккаунте или авторизироваться в другом?\n",
-                    confirm_text="В этот аккаунт",
-                    cancel_text="В другой аккаунт",
+                    i18n.t("startup.saved_session_title"),
+                    i18n.t(
+                        "startup.saved_session_text",
+                        username=saved_username
+                    ),
+                    confirm_text=i18n.t("startup.this_account"),
+                    cancel_text=i18n.t("startup.other_account"),
                     danger=False,
+                    button_width=165,
                 ):
-                    ok, username, reason = check_saved_session()
-                    if ok:
-                        _log.info("Автовход по сохранённой сессии: %s", username)
-                        self.on_login_success(username)
-                        return
-
-                    _log.warning("Сохранённая сессия недействительна: reason=%s", reason)
-                    if reason == "access_expired":
-                        RoundedDialog.warning(
-                            "Лицензия более недействительна",
-                            "Срок действия доступа к приложению истёк.\n"
-                            "Чтобы продолжить использование приложения рекомендуется обратиться к администратору вашей организации!",
-                        )
-                    else:
-                        RoundedDialog.warning(
-                            "Сессия истекла",
-                            "Предыдущая сессия более недействительна, пожалуйста войдите заново!",
-                        )
+                    self._start_saved_session_check(saved_username)
+                    return
                 else:
                     _log.debug("Пользователь отказался от автовхода, сессия сброшена")
                     clear_saved_session()
@@ -287,35 +270,125 @@ class AppController:
         else:
             continue_flow()
 
+    def _start_saved_session_check(self, saved_username):
+        worker = ApiWorker(check_saved_session)
+        self._session_worker = worker
+        worker.ok.connect(self._on_saved_session_checked)
+        worker.fail.connect(lambda err: self._on_saved_session_checked(
+            (False, saved_username, "network_error")
+        ))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_saved_session_checked(self, result):
+        ok, username, reason = result
+        if ok:
+            _log.info("Автовход по сохранённой сессии: %s", username)
+            self.on_login_success(username)
+            return
+
+        _log.warning("Сохранённая сессия не подтверждена: reason=%s", reason)
+        if reason == "access_expired":
+            RoundedDialog.warning(
+                i18n.t("login.access_expired_title"),
+                i18n.t("login.access_expired_text")
+            )
+        elif reason == "network_error":
+            RoundedDialog.warning(
+                i18n.t("login.error_title"),
+                i18n.t("login.network_error")
+            )
+        else:
+            RoundedDialog.warning(
+                i18n.t("startup.session_expired_title"),
+                i18n.t("startup.session_expired_text")
+            )
+        self.show_login()
+
     def show_login(self):
         _log.debug("Открытие окна авторизации")
+
+        new_login = LoginWindow(on_success=self.on_login_success)
+        new_login.show()
+
         if self.main_window is not None:
             self.main_window.close()
             self.main_window = None
 
-        self.login_window = LoginWindow(on_success=self.on_login_success)
-        self.login_window.show()
+        if self.startup_window is not None:
+            self.startup_window.close()
+            self.startup_window = None
+
+        if self.login_window is not None:
+            self.login_window.close()
+
+        self.login_window = new_login
 
     def on_login_success(self, username: str):
         _log.info("Успешная авторизация: %s", username)
+
+        from windows.main_window import MainWindow
+
+        new_main_window = MainWindow(
+            username,
+            on_logout=self.show_login
+        )
+        new_main_window.show()
+
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
 
-        from main_window import MainWindow
-        self.main_window = MainWindow(username, on_logout=self.show_login)
-        self.main_window.show()
+        if self.startup_window is not None:
+            self.startup_window.close()
+            self.startup_window = None
 
+        self.main_window = new_main_window
 
 def main():
     app_logger.setup()
     app_logger.install_excepthook()
 
     app = QtWidgets.QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+
+    prefs = QtCore.QSettings("redictor", "RetinopatiaApp")
+
+    saved_accent = str(
+        prefs.value("accent_color", BLUE)
+    )
+
+    accent = next(
+        (
+            color for color in ACCENTS
+            if color.lower() == saved_accent.lower()
+        ),
+        BLUE
+    )
+
+    app._retina_theme = AccentTheme(app, accent)
+
+    if i18n.is_first_launch():
+        from dialogs.language_dialog import LanguageDialog
+        chosen = LanguageDialog.ask_language()
+        i18n.set_language(chosen)
+    else:
+        i18n.load_language(i18n.get_saved_language() or i18n.DEFAULT_LANGUAGE)
+
     controller = AppController()
     controller.start()
     sys.exit(app.exec_())
 
-
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) >= 4 and sys.argv[1] == "--infer":
+        from ai.infer_torch import main as inference_main
+
+        sys.argv = [
+            sys.argv[0],
+            sys.argv[2],
+            sys.argv[3],
+        ]
+
+        inference_main()
+    else:
+        main()

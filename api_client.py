@@ -6,17 +6,18 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import app_logger
 
-BASE_URL = "https://retinoserver.vercel.app"
+BASE_URL = "https://retinopatia-app-server.freesrv.com"
 
 _timeout = (5, 25)
 _session = requests.Session()
 _retry = Retry(
     total=2,
     connect=2,
-    read=2,
+    read=0,
     backoff_factor=0.7,
     status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=("GET", "POST")
+    allowed_methods=frozenset({"GET"}),
+    raise_on_status=False,
 )
 _adapter = HTTPAdapter(max_retries=_retry)
 _session.mount("https://", _adapter)
@@ -40,7 +41,11 @@ def _request(method, url, **kwargs):
 _log = app_logger.get("api")
 
 _token: Optional[str] = None
-_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_token.json")
+_TOKEN_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "jsons",
+    "auth_token.json"
+)
 
 
 def _load_token() -> Optional[str]:
@@ -57,6 +62,7 @@ def _load_token() -> Optional[str]:
 
 def _save_token(token: str, username: str = "") -> None:
     try:
+        os.makedirs(os.path.dirname(_TOKEN_FILE), exist_ok=True)
         with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
             json.dump({"token": token, "username": username}, f, ensure_ascii=False)
     except Exception:
@@ -181,8 +187,6 @@ def authenticate_user(username: str, password: str, remember: bool = True):
 
     except NetworkError as exc:
         _log.warning("Сетевая ошибка при авторизации: %s", exc)
-        _token = None
-        _clear_token()
         return False, "network_error"
 
 def logout() -> None:
@@ -222,13 +226,12 @@ def delete_user_soft(confirm_phrase: str = "delete my account") -> bool:
     return r.status_code == 200
 
 def get_updates():
-    try:
-        r = _request("GET", f"{BASE_URL}/public/updates", headers=_headers())
-        if r.status_code != 200:
-            return []
-        return r.json()
-    except NetworkError:
-        return []
+    r = _request("GET", f"{BASE_URL}/public/updates", headers=_headers())
+    r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, list):
+        raise ValueError("Invalid updates response: expected list")
+    return data
 
 def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float, p_max: float, ts: Optional[str] = None) -> bool:
     payload = {
@@ -251,19 +254,17 @@ def save_training_record(user_stage: int, ai_stage: int, score: int, dice: float
     return r.status_code == 200
 
 def get_training_history(limit=2000):
-    try:
-        r = _request(
-            "GET",
-            f"{BASE_URL}/training/history",
-            headers=_headers(),
-            params={"limit": limit}
-        )
-        if r.status_code != 200:
-            return []
-        return r.json()
-    except NetworkError:
-        return []
-
+    r = _request(
+        "GET",
+        f"{BASE_URL}/training/history",
+        headers=_headers(),
+        params={"limit": limit}
+    )
+    r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, list):
+        raise ValueError("Invalid history response: expected list")
+    return data
 
 def get_maintenance_status() -> Dict[str, Any]:
     r = _request("GET", f"{BASE_URL}/status/maintenance", headers=_headers(), timeout=_timeout)
@@ -283,21 +284,21 @@ def reset_training_history() -> bool:
     return r.status_code == 200
 
 def get_profile():
-    try:
-        r = _request(
-            "GET",
-            f"{BASE_URL}/auth/profile",
-            headers=_headers(),
-        )
-        return r.json() if r.status_code == 200 else None
-    except NetworkError:
-        raise
-    except Exception:
+    r = _request(
+        "GET",
+        f"{BASE_URL}/auth/profile",
+        headers=_headers(),
+    )
+    if r.status_code in (401, 403):
         return None
+    r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, dict):
+        raise ValueError("Invalid profile response")
+    return data
 
 def has_saved_session() -> bool:
     return bool(_token)
-
 
 def clear_saved_session() -> None:
     global _token
@@ -319,7 +320,11 @@ def check_saved_session():
         return False, username, "invalid_session"
 
     except NetworkError:
-        return True, username, "network_error"
+        return False, username, "network_error"
+
+    except (requests.exceptions.HTTPError, ValueError) as exc:
+        _log.warning("Ошибка ответа сервера при проверке сессии: %s", exc)
+        return False, username, "network_error"
 
     except Exception:
         _log.warning("Ошибка при проверке сохранённой сессии", exc_info=True)

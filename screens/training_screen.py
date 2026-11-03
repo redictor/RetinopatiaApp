@@ -4,36 +4,110 @@ import json
 import random
 import subprocess
 import tempfile
+import i18n
 
 import numpy as np
 import cv2
 from PyQt5 import QtWidgets, QtCore, QtGui
+from ui_theme import current_accent
 
-from ui_dialogs import RoundedDialog
+from dialogs.ui_dialogs import RoundedDialog
 import app_logger
 
 _log = app_logger.get("screens.training")
 
 
-STAGE_NAMES = [
-    "0 стадия - Нет ретинопатии",
-    "1 стадия - Начальная",
-    "2 стадия - Умеренная",
-    "3 стадия - Тяжёлая",
-    "4 стадия - Пролиферативная",
-]
+def stage_name(stage: int) -> str:
+    return i18n.t(f"stages.{stage}")
 
 def _imread_unicode(path: str):
     data = np.fromfile(path, dtype=np.uint8)
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
-def _blend_heatmap_on_rgb(rgb: np.ndarray, heat: np.ndarray, alpha: float = 0.35) -> np.ndarray:
-    heat_u8 = (heat * 255).astype(np.uint8)
-    heat_color = cv2.applyColorMap(heat_u8, cv2.COLORMAP_JET)
-    heat_color = cv2.cvtColor(heat_color, cv2.COLOR_BGR2RGB)
-    heat_color = cv2.resize(heat_color, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
-    out = rgb.astype(np.float32) * (1 - alpha) + heat_color.astype(np.float32) * alpha
+
+def _fundus_mask_from_rgb(rgb: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    foreground = (blurred > 15).astype(np.uint8)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    foreground = cv2.morphologyEx(
+        foreground, cv2.MORPH_CLOSE, kernel
+    )
+
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        foreground, 8
+    )
+
+    height, width = gray.shape
+    candidates = []
+
+    for component in range(1, n):
+        area = int(stats[component, cv2.CC_STAT_AREA])
+
+        if area < 0.10 * height * width:
+            continue
+
+        cx, cy = centroids[component]
+        distance = (
+            ((cx - width / 2) / width) ** 2
+            + ((cy - height / 2) / height) ** 2
+        )
+
+        candidates.append(
+            (area / (1.0 + 4.0 * distance), component)
+        )
+
+    if not candidates:
+        return foreground.astype(bool)
+
+    selected = max(candidates)[1]
+    component_mask = (labels == selected).astype(np.uint8)
+
+    contours, _ = cv2.findContours(
+        component_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    filled = np.zeros_like(component_mask)
+    cv2.drawContours(filled, contours, -1, 1, cv2.FILLED)
+
+    return filled.astype(bool)
+
+
+def _blend_heatmap_on_rgb(
+    rgb: np.ndarray,
+    heat: np.ndarray,
+    alpha: float = 0.35
+) -> np.ndarray:
+    heat_resized = cv2.resize(
+        heat,
+        (rgb.shape[1], rgb.shape[0]),
+        interpolation=cv2.INTER_LINEAR
+    )
+
+    fundus_mask = _fundus_mask_from_rgb(rgb).astype(np.float32)
+
+    heat_u8 = (
+        np.clip(heat_resized, 0, 1) * 255
+    ).astype(np.uint8)
+
+    heat_color = cv2.applyColorMap(
+        heat_u8, cv2.COLORMAP_JET
+    )
+    heat_color = cv2.cvtColor(
+        heat_color, cv2.COLOR_BGR2RGB
+    )
+
+    weight = float(alpha) * fundus_mask[..., None]
+
+    out = (
+        rgb.astype(np.float32) * (1 - weight)
+        + heat_color.astype(np.float32) * weight
+    )
+
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
@@ -48,7 +122,13 @@ def _overlay_user_mask(rgb: np.ndarray, mask01: np.ndarray, alpha: float = 0.30)
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def _dice(a: np.ndarray, b: np.ndarray) -> float:
+def _dice(a: np.ndarray, b: np.ndarray, tolerance_px: int = 6) -> float:
+    a = a.astype(np.uint8)
+    b = b.astype(np.uint8)
+    if tolerance_px > 0:
+        kernel = np.ones((tolerance_px * 2 + 1, tolerance_px * 2 + 1), np.uint8)
+        a = cv2.dilate(a, kernel)
+        b = cv2.dilate(b, kernel)
     a = a.astype(bool)
     b = b.astype(bool)
     inter = (a & b).sum()
@@ -57,13 +137,44 @@ def _dice(a: np.ndarray, b: np.ndarray) -> float:
         return 0.0
     return float(2 * inter / denom)
 
-
-def _ai_mask_from_heatmap(heat224: np.ndarray, top_frac: float = 0.30) -> np.ndarray:
+def _ai_mask_from_heatmap(
+    heat224: np.ndarray,
+    top_frac: float = 0.30,
+    valid_mask: np.ndarray | None = None
+) -> np.ndarray:
     h = heat224.astype(np.float32)
-    h = (h - h.min()) / (h.max() - h.min() + 1e-6)
-    thr = np.quantile(h, 1.0 - top_frac)
-    return h >= thr
 
+    if valid_mask is None:
+        valid_mask = np.ones(h.shape, dtype=bool)
+    else:
+        valid_mask = valid_mask.astype(bool)
+
+    result = np.zeros(h.shape, dtype=bool)
+    valid_values = h[valid_mask]
+
+    if valid_values.size == 0 or top_frac <= 0:
+        return result
+
+    h_min = float(valid_values.min())
+    h_max = float(valid_values.max())
+
+    if h_max - h_min < 1e-6:
+        return result
+
+    normalized = (h - h_min) / (h_max - h_min)
+
+    top_frac = max(0.02, min(0.60, float(top_frac)))
+
+    threshold = np.quantile(
+        normalized[valid_mask],
+        1.0 - top_frac
+    )
+
+    result[valid_mask] = (
+        normalized[valid_mask] >= threshold
+    )
+
+    return result
 
 def _score_1to5_from_similarity(sim: float) -> int:
     if sim >= 0.80:
@@ -99,8 +210,19 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
 
     def _start_anim(self, checked):
         self._anim.stop()
+
+        enabled = QtCore.QSettings(
+            "redictor", "RetinopatiaApp"
+        ).value("animations_enabled", True, type=bool)
+
+        target = 1.0 if checked else 0.0
+
+        if not enabled:
+            self.set_offset(target)
+            return
+
         self._anim.setStartValue(self._offset)
-        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.setEndValue(target)
         self._anim.start()
 
     def mouseReleaseEvent(self, event):
@@ -117,7 +239,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         if not self.isEnabled():
             bg = QtGui.QColor("#b9c6d3")
         elif self.isChecked():
-            bg = QtGui.QColor("#0078D7")
+            bg = QtGui.QColor(current_accent())
         else:
             bg = QtGui.QColor("#cfcfcf")
         p.setBrush(bg)
@@ -130,6 +252,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         x = x_min + (x_max - x_min) * self._offset
         p.setBrush(QtGui.QColor("#ffffff"))
         p.drawEllipse(QtCore.QRectF(x, margin, d, d))
+        p.end()
 
 
 class ModeSwitch(QtWidgets.QAbstractButton):
@@ -157,9 +280,20 @@ class ModeSwitch(QtWidgets.QAbstractButton):
 
     def _on_toggled(self, checked):
         self._anim.stop()
-        self._anim.setStartValue(self._offset)
-        self._anim.setEndValue(1.0 if checked else 0.0)
-        self._anim.start()
+
+        enabled = QtCore.QSettings(
+            "redictor", "RetinopatiaApp"
+        ).value("animations_enabled", True, type=bool)
+
+        target = 1.0 if checked else 0.0
+
+        if not enabled:
+            self.set_offset(target)
+        else:
+            self._anim.setStartValue(self._offset)
+            self._anim.setEndValue(target)
+            self._anim.start()
+
         self.modeChanged.emit(bool(checked))
 
     def mouseReleaseEvent(self, event):
@@ -181,7 +315,7 @@ class ModeSwitch(QtWidgets.QAbstractButton):
         half_w = (rect.width() - margin * 2) / 2
         knob_x = margin + half_w * self._offset
         knob = QtCore.QRectF(knob_x, margin, half_w, rect.height() - margin * 2)
-        p.setBrush(QtGui.QColor("#0078D7") if self.isEnabled() else QtGui.QColor("#b9c6d3"))
+        p.setBrush(QtGui.QColor(current_accent()) if self.isEnabled() else QtGui.QColor("#b9c6d3"))
         p.drawRoundedRect(knob, 12, 12)
         font = QtGui.QFont()
         font.setPointSize(8)
@@ -190,9 +324,10 @@ class ModeSwitch(QtWidgets.QAbstractButton):
         left_rect = QtCore.QRectF(margin, margin, half_w, rect.height() - margin * 2)
         right_rect = QtCore.QRectF(margin + half_w, margin, half_w, rect.height() - margin * 2)
         p.setPen(QtGui.QColor("#ffffff") if not self.isChecked() else QtGui.QColor("#333333"))
-        p.drawText(left_rect, QtCore.Qt.AlignCenter, "Кисть")
+        p.drawText(left_rect, QtCore.Qt.AlignCenter, i18n.t("training.tool_brush"))
         p.setPen(QtGui.QColor("#ffffff") if self.isChecked() else QtGui.QColor("#333333"))
-        p.drawText(right_rect, QtCore.Qt.AlignCenter, "Ластик")
+        p.drawText(right_rect, QtCore.Qt.AlignCenter, i18n.t("training.tool_eraser"))
+        p.end()
 
 
 class MouseHintIcon(QtWidgets.QWidget):
@@ -220,6 +355,7 @@ class MouseHintIcon(QtWidgets.QWidget):
         elif self.mode == "wheel":
             p.setBrush(QtGui.QColor("#222"))
             p.drawRoundedRect(QtCore.QRectF(12, 6, 4, 9), 2, 2)
+        p.end()
 
 class InferenceWorker(QtCore.QThread):
     done = QtCore.pyqtSignal(dict)
@@ -233,14 +369,25 @@ class InferenceWorker(QtCore.QThread):
     def run(self):
         _log.debug("Запуск инференса: %s", self.image_path)
         try:
+            app_dir = os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )
+
             py = sys.executable
-            cmd = [py, "infer_torch.py", self.image_path, self.out_png]
+
+            if getattr(sys, "frozen", False):
+                cmd = [py, "--infer", self.image_path, self.out_png]
+            else:
+                script = os.path.join(app_dir, "ai", "infer_torch.py")
+                cmd = [py, script, self.image_path, self.out_png]
+
             res = subprocess.run(
                 cmd,
+                cwd=app_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=60,
+                timeout=120,
             )
             if res.returncode != 0:
                 err = (res.stderr or res.stdout or "").strip() or "Неизвестная ошибка"
@@ -257,13 +404,15 @@ class InferenceWorker(QtCore.QThread):
             )
             self.done.emit(data)
         except subprocess.TimeoutExpired:
-            _log.error("Инференс превысил таймаут (60 с): %s", self.image_path)
-            self.fail.emit("Превышено время ожидания анализа (60 сек).")
+            _log.error("Инференс превысил таймаут (120 с): %s", self.image_path)
+            self.fail.emit(i18n.t("training.analysis_timeout"))
         except Exception as e:
             _log.error("Необработанная ошибка InferenceWorker", exc_info=True)
             self.fail.emit(str(e))
 
 class PaintCanvas(QtWidgets.QWidget):
+    MAX_UNDO_STEPS = 30
+
     def __init__(self):
         super().__init__()
         self.base_rgb = None
@@ -282,8 +431,10 @@ class PaintCanvas(QtWidgets.QWidget):
         self.pan = QtCore.QPointF(0, 0)
         self._panning = False
         self._pan_start = None
+        self._undo_stack = []
         self.setMinimumSize(1, 1)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
     def clear_all(self):
         self.base_rgb = None
@@ -298,6 +449,7 @@ class PaintCanvas(QtWidgets.QWidget):
         self.pan = QtCore.QPointF(0, 0)
         self._panning = False
         self._pan_start = None
+        self._undo_stack = []
         self.update()
 
     def set_image(self, rgb: np.ndarray):
@@ -309,6 +461,7 @@ class PaintCanvas(QtWidgets.QWidget):
         self.alpha_cam = 0.33
         self.zoom = 1.0
         self.pan = QtCore.QPointF(0, 0)
+        self._undo_stack = []
         self._recompose()
         self.update()
 
@@ -392,6 +545,20 @@ class PaintCanvas(QtWidgets.QWidget):
         iy = max(0, min(H - 1, int(ny * H)))
         return ix, iy
 
+    def _push_undo_snapshot(self):
+        if self.user_mask is None:
+            return
+        self._undo_stack.append(self.user_mask.copy())
+        if len(self._undo_stack) > self.MAX_UNDO_STEPS:
+            self._undo_stack.pop(0)
+
+    def undo(self):
+        if not self._undo_stack:
+            return
+        self.user_mask = self._undo_stack.pop()
+        self._recompose()
+        self.update()
+
     def _paint_at(self, ix: int, iy: int):
         if self.user_mask is None:
             return
@@ -404,13 +571,19 @@ class PaintCanvas(QtWidgets.QWidget):
         p.fillRect(self.rect(), QtGui.QColor("#fafafa"))
         if self.view_rgb is None:
             p.setPen(QtGui.QPen(QtGui.QColor("#888"), 1))
-            p.drawText(self.rect(), QtCore.Qt.AlignCenter, "Область изображения")
+            p.drawText(
+                self.rect(),
+                QtCore.Qt.AlignCenter,
+                i18n.t("training.image_area_placeholder")
+            )
+            p.end()
             return
         x0, y0, w, h = self._label_rect_for_image()
         H, W = self.view_rgb.shape[:2]
         qimg = QtGui.QImage(self.view_rgb.data, W, H, 3 * W, QtGui.QImage.Format_RGB888)
         pix = QtGui.QPixmap.fromImage(qimg.copy())
         p.drawPixmap(QtCore.QRect(x0, y0, w, h), pix)
+        p.end()
 
     def wheelEvent(self, event):
         if self.base_rgb is None:
@@ -436,6 +609,8 @@ class PaintCanvas(QtWidgets.QWidget):
         p = self._widget_pos_to_image_xy(e.pos())
         if p is None:
             return
+        self.setFocus()
+        self._push_undo_snapshot()
         self._dragging = True
         self._last_pos = p
         self._paint_at(p[0], p[1])
@@ -491,6 +666,13 @@ class PaintCanvas(QtWidgets.QWidget):
         self.pan.setX(max(-max_x, min(max_x, self.pan.x())))
         self.pan.setY(max(-max_y, min(max_y, self.pan.y())))
 
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Z and event.modifiers() & QtCore.Qt.ControlModifier:
+            self.undo()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 class ShimmerBar(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -499,7 +681,7 @@ class ShimmerBar(QtWidgets.QWidget):
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(16)
+        self._timer.start(30)
 
     def _tick(self):
         self._pos += 0.018
@@ -522,11 +704,12 @@ class ShimmerBar(QtWidgets.QWidget):
         grad = QtGui.QLinearGradient(x, 0, x + w, 0)
         grad.setColorAt(0.0, QtGui.QColor(0, 120, 215, 0))
         grad.setColorAt(0.45, QtGui.QColor("#1f8bf0"))
-        grad.setColorAt(0.70, QtGui.QColor("#0078D7"))
+        grad.setColorAt(0.70, QtGui.QColor(current_accent()))
         grad.setColorAt(1.0, QtGui.QColor(0, 120, 215, 0))
 
         p.setBrush(grad)
         p.drawRoundedRect(QtCore.QRect(x, 0, w, r.height()), 4, 4)
+        p.end()
 
 class LoadingDialog(QtWidgets.QDialog):
     def __init__(self, parent):
@@ -579,7 +762,7 @@ class LoadingDialog(QtWidgets.QDialog):
         title_box = QtWidgets.QVBoxLayout()
         title_box.setSpacing(2)
 
-        title = QtWidgets.QLabel("Анализ снимка")
+        title = QtWidgets.QLabel(i18n.t("training.analysis_title"))
         title.setStyleSheet("""
             QLabel {
                 font-size: 16px;
@@ -590,7 +773,7 @@ class LoadingDialog(QtWidgets.QDialog):
             }
         """)
 
-        subtitle = QtWidgets.QLabel("ИИ обрабатывает изображение и формирует вердикт")
+        subtitle = QtWidgets.QLabel(i18n.t("training.analysis_subtitle"))
         subtitle.setStyleSheet("""
             QLabel {
                 font-size: 12px;
@@ -616,7 +799,7 @@ class LoadingDialog(QtWidgets.QDialog):
 
         lay.addSpacing(12)
 
-        self.setFixedWidth(460)
+        self.setFixedWidth(500)
         self.adjustSize()
 
         QtCore.QTimer.singleShot(0, self._center_on_parent)
@@ -640,18 +823,40 @@ class TrainingScreen(QtWidgets.QWidget):
         self._on_save_record = on_save_record
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
+        # self.samples_dir = os.path.join(
+        #     os.path.dirname(os.path.abspath(__file__)),
+        #     "..",
+        #     "samples",
+        # )
         self.samples_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "samples",
+            "colored_images"
         )
         self.image_path = None
+        self._last_result_stages = None
         self._worker = None
         self._dlg = None
         self.step = 0
-
+        self._decks = {}
+        self._deck = []
+        self._used = []
         self._build()
         self._set_step(0)
+
+    def retranslate_ui(self):
+        """Refresh only language-dependent labels; keep canvas/mask/current stage."""
+        self.step_hint.setText(i18n.t(f"training.step_{min(self.step + 1, 4)}"))
+        if self._last_result_stages is not None:
+            ai_stage, user_stage = self._last_result_stages
+            self.result_ai_line.setText(i18n.t(
+                "training.ai_determined", ai_txt=stage_name(ai_stage)
+            ))
+            self.result_user_line.setText(i18n.t(
+                "training.your_answer", user_txt=stage_name(user_stage)
+            ))
+        self.mode_switch.update()
+        self.canvas.update()
 
     def _select_stage(self, stage: int):
         if stage < 0 or stage > 4:
@@ -675,13 +880,14 @@ class TrainingScreen(QtWidgets.QWidget):
             QProgressBar::chunk { background:#0078D7; border-radius:7px; }
             QSlider::groove:horizontal { height:6px; background:#e8e8e8; border-radius:3px; }
             QSlider::handle:horizontal { width:14px; margin:-6px 0; border-radius:7px; background:#0078D7; }
+            QSlider::handle:horizontal:disabled { background:#b9c6d3; }
         """)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
 
-        title = QtWidgets.QLabel("Обучение")
+        title = QtWidgets.QLabel(i18n.t("nav.training"))
         title.setStyleSheet("QLabel{font-size:22px;font-weight:900;}")
         root.addWidget(title)
 
@@ -730,9 +936,9 @@ class TrainingScreen(QtWidgets.QWidget):
         hl.setContentsMargins(10, 5, 10, 5)
         hl.setSpacing(12)
         hl.addStretch(1)
-        hl.addWidget(hint_item("left", "Кисть"))
-        hl.addWidget(hint_item("right", "Передвижение"))
-        hl.addWidget(hint_item("wheel", "Приближение"))
+        hl.addWidget(hint_item("left", i18n.t("training.tool_brush")))
+        hl.addWidget(hint_item("right", i18n.t("training.move_tool")))
+        hl.addWidget(hint_item("right", i18n.t("training.move_tool")))
         hl.addStretch(1)
 
         ll.addWidget(self.canvas, 1)
@@ -746,11 +952,11 @@ class TrainingScreen(QtWidgets.QWidget):
         rl.setContentsMargins(14, 14, 14, 14)
         rl.setSpacing(10)
 
-        head = QtWidgets.QLabel("Панель тренировки")
+        head = QtWidgets.QLabel(i18n.t("training.panel_title"))
         head.setStyleSheet("QLabel{font-size:14px;font-weight:900;border:none;background:transparent;}")
         rl.addWidget(head)
 
-        self.btn_start = QtWidgets.QPushButton("Начать тренировку")
+        self.btn_start = QtWidgets.QPushButton(i18n.t("training.start_button"))
         self.btn_start.setFixedHeight(46)
         self.btn_start.clicked.connect(self._start_training)
         rl.addWidget(self.btn_start)
@@ -762,7 +968,7 @@ class TrainingScreen(QtWidgets.QWidget):
         cb.setSpacing(10)
 
         row_paint = QtWidgets.QHBoxLayout()
-        lbl_paint = QtWidgets.QLabel("Разметка")
+        lbl_paint = QtWidgets.QLabel(i18n.t("training.marking_label"))
         lbl_paint.setStyleSheet("QLabel{font-weight:900;color:#222;border:none;background:transparent;}")
         self.chk_paint = ToggleSwitch()
         self.chk_paint.setChecked(True)
@@ -773,7 +979,7 @@ class TrainingScreen(QtWidgets.QWidget):
         cb.addLayout(row_paint)
 
         row_mode = QtWidgets.QHBoxLayout()
-        lbl_mode = QtWidgets.QLabel("Инструмент")
+        lbl_mode = QtWidgets.QLabel(i18n.t("training.tool_label"))
         lbl_mode.setStyleSheet("QLabel{font-weight:900;color:#222;border:none;background:transparent;}")
         self.mode_switch = ModeSwitch()
         self.mode_switch.setChecked(False)
@@ -785,7 +991,7 @@ class TrainingScreen(QtWidgets.QWidget):
 
         br = QtWidgets.QHBoxLayout()
         br.setSpacing(10)
-        lb = QtWidgets.QLabel("Размер кисти")
+        lb = QtWidgets.QLabel(i18n.t("training.brush_size"))
         lb.setStyleSheet("QLabel{font-size:12px;font-weight:900;border:none;background:transparent;}")
         br.addWidget(lb)
         self.brush_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
@@ -795,21 +1001,23 @@ class TrainingScreen(QtWidgets.QWidget):
         br.addWidget(self.brush_slider, 1)
         cb.addLayout(br)
 
-        stl = QtWidgets.QLabel("Выберите стадию диабетической ретинопатии:")
+        stl = QtWidgets.QLabel(i18n.t("training.select_stage_prompt"))
         stl.setStyleSheet("QLabel{font-size:12px;font-weight:900;border:none;background:transparent;}")
         cb.addWidget(stl)
 
         self.stage_combo = QtWidgets.QComboBox()
-        self.stage_combo.addItems(STAGE_NAMES)
+        self.stage_combo.addItems(
+            [i18n.t(f"stages.{stage}") for stage in range(5)]
+        )
         self.stage_combo.setFixedHeight(40)
         cb.addWidget(self.stage_combo)
 
-        self.btn_confirm_focus = QtWidgets.QPushButton("Подтвердить выбранные данные")
+        self.btn_confirm_focus = QtWidgets.QPushButton(i18n.t("training.confirm_button"))
         self.btn_confirm_focus.setFixedHeight(44)
         self.btn_confirm_focus.clicked.connect(self._confirm_focus)
         cb.addWidget(self.btn_confirm_focus)
 
-        self.btn_ai = QtWidgets.QPushButton("Проверить результат")
+        self.btn_ai = QtWidgets.QPushButton(i18n.t("training.check_result_button"))
         self.btn_ai.setFixedHeight(46)
         self.btn_ai.clicked.connect(self._run_ai_async)
         cb.addWidget(self.btn_ai)
@@ -823,12 +1031,12 @@ class TrainingScreen(QtWidgets.QWidget):
         layers_l.setContentsMargins(12, 12, 12, 12)
         layers_l.setSpacing(8)
 
-        layers_title = QtWidgets.QLabel("Слои изображения")
+        layers_title = QtWidgets.QLabel(i18n.t("training.layers_title"))
         layers_title.setStyleSheet("QLabel{font-size:13px;font-weight:900;border:none;background:transparent;}")
         layers_l.addWidget(layers_title)
 
         row_layer_user = QtWidgets.QHBoxLayout()
-        lbl_layer_user = QtWidgets.QLabel("Ваша разметка")
+        lbl_layer_user = QtWidgets.QLabel(i18n.t("training.your_markup"))
         lbl_layer_user.setStyleSheet("QLabel{font-weight:800;color:#222;border:none;background:transparent;}")
         self.chk_layer_user = ToggleSwitch()
         self.chk_layer_user.setChecked(True)
@@ -839,18 +1047,19 @@ class TrainingScreen(QtWidgets.QWidget):
         layers_l.addLayout(row_layer_user)
 
         row_layer_ai = QtWidgets.QHBoxLayout()
-        lbl_layer_ai = QtWidgets.QLabel("Слой ИИ")
+        lbl_layer_ai = QtWidgets.QLabel(i18n.t("training.ai_markup"))
         lbl_layer_ai.setStyleSheet("QLabel{font-weight:800;color:#222;border:none;background:transparent;}")
         self.chk_layer_ai = ToggleSwitch()
         self.chk_layer_ai.setChecked(True)
         self.chk_layer_ai.toggled.connect(lambda checked: self.canvas.set_show_ai(checked))
+        self.chk_layer_ai.toggled.connect(lambda checked: self.ai_alpha_slider.setEnabled(checked))
         row_layer_ai.addWidget(lbl_layer_ai)
         row_layer_ai.addStretch(1)
         row_layer_ai.addWidget(self.chk_layer_ai)
         layers_l.addLayout(row_layer_ai)
 
         alpha_row = QtWidgets.QHBoxLayout()
-        alpha_lbl = QtWidgets.QLabel("Прозрачность ИИ")
+        alpha_lbl = QtWidgets.QLabel(i18n.t("training.ai_markup_opacity"))
         alpha_lbl.setStyleSheet("QLabel{font-size:12px;font-weight:800;border:none;background:transparent;}")
         alpha_row.addWidget(alpha_lbl)
         self.ai_alpha_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
@@ -860,6 +1069,35 @@ class TrainingScreen(QtWidgets.QWidget):
         alpha_row.addWidget(self.ai_alpha_slider, 1)
         layers_l.addLayout(alpha_row)
 
+        legend_header = QtWidgets.QHBoxLayout()
+        legend_header.setSpacing(6)
+
+        legend_header_title = QtWidgets.QLabel(i18n.t("training.layers_legend"))
+        legend_header_title.setStyleSheet("font-size:12px;font-weight:900;color:#222;border:none;background:transparent;")
+        legend_header.addWidget(legend_header_title)
+        legend_header.addStretch(1)
+
+        self.legend_toggle_btn = QtWidgets.QPushButton()
+        self.legend_toggle_btn.setFixedSize(22, 22)
+        self.legend_toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.legend_toggle_btn.setCheckable(True)
+        self._legend_icon_svg = """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14">
+                <circle cx="12" cy="12" r="10" fill="none" stroke="{color}" stroke-width="2"/>
+                <text x="12" y="16.5" font-size="12" font-weight="900" text-anchor="middle" fill="{color}" font-family="Arial, sans-serif">?</text>
+            </svg>
+        """
+        self._set_legend_icon(current_accent())
+        self.legend_toggle_btn.setStyleSheet("""
+            QPushButton { background:#eef3fb; border:1px solid #cfe0f5; border-radius:11px; }
+            QPushButton:hover { background:#dce9fb; }
+            QPushButton:checked { background:#0078D7; border:1px solid #0078D7; }
+        """)
+        self.legend_toggle_btn.clicked.connect(self._toggle_legend)
+        legend_header.addWidget(self.legend_toggle_btn)
+
+        layers_l.addLayout(legend_header)
+
         legend_box = QtWidgets.QFrame()
         legend_box.setStyleSheet("""
             QFrame { background:#f8fbff; border:1px solid #e2eefc; border-radius:12px; }
@@ -867,10 +1105,6 @@ class TrainingScreen(QtWidgets.QWidget):
         legend_l = QtWidgets.QVBoxLayout(legend_box)
         legend_l.setContentsMargins(10, 8, 10, 8)
         legend_l.setSpacing(6)
-
-        legend_title = QtWidgets.QLabel("Обозначения слоёв")
-        legend_title.setStyleSheet("font-size:12px;font-weight:900;color:#222;border:none;background:transparent;")
-        legend_l.addWidget(legend_title)
 
         def layer_legend_item(color: str, title: str, desc: str):
             row = QtWidgets.QHBoxLayout()
@@ -885,55 +1119,122 @@ class TrainingScreen(QtWidgets.QWidget):
             row.addWidget(text, 1)
             return row
 
-        legend_l.addLayout(layer_legend_item("#00A65A", "Ваша разметка", "область, которую вы выделили вручную"))
-        legend_l.addLayout(layer_legend_item("#ff3b30", "Тёплые зоны", "участки, на которые модель обращает наибольшее внимание при анализе"))
-        legend_l.addLayout(layer_legend_item("#0078D7", "Холодные зоны", "участки, которые обладают наименьшим вниманием ИИ"))
+        legend_l.addLayout(layer_legend_item(
+            "#00A65A",
+            i18n.t("training.your_markup"),
+            i18n.t("training.manual_area_desc")
+        ))
+
+        legend_l.addLayout(layer_legend_item(
+            "#ff3b30",
+            i18n.t("training.warm_zones"),
+            i18n.t("training.warm_zones_desc")
+        ))
+
+        legend_l.addLayout(layer_legend_item(
+            "#0078D7",
+            i18n.t("training.cold_zones"),
+            i18n.t("training.cold_zones_desc")
+        ))
+
+        self.legend_wrapper = QtWidgets.QWidget()
+        legend_wrapper_l = QtWidgets.QVBoxLayout(self.legend_wrapper)
+        legend_wrapper_l.setContentsMargins(0, 0, 0, 0)
+        legend_wrapper_l.addWidget(legend_box)
+        self.legend_wrapper.setMaximumHeight(0)
+        self.legend_wrapper.setMinimumHeight(0)
+        layers_l.addWidget(self.legend_wrapper)
+
+        self._legend_expanded = False
+        self._legend_anim = QtCore.QPropertyAnimation(self.legend_wrapper, b"maximumHeight", self)
+        self._legend_anim.setDuration(380)
+        self._legend_anim.setEasingCurve(QtCore.QEasingCurve.InOutCubic)
 
         rl.addWidget(self.layers_box)
 
         self.result_frame = QtWidgets.QFrame()
         self.result_frame.setStyleSheet("""
-            QFrame { background:#f7fbff; border:1px solid #d6e7ff; border-radius:14px; }
+            QFrame { background:#f7fbff; border:1px solid #d6e7ff; border-radius:16px; }
         """)
         rf = QtWidgets.QVBoxLayout(self.result_frame)
-        rf.setContentsMargins(12, 12, 12, 12)
-        rf.setSpacing(8)
+        rf.setContentsMargins(16, 16, 16, 16)
+        rf.setSpacing(12)
 
-        self.result_title = QtWidgets.QLabel("Результат")
-        self.result_title.setStyleSheet("QLabel{font-size:13px;font-weight:900;color:#0b2a4a;border:none;background:transparent;}")
-        rf.addWidget(self.result_title)
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setSpacing(8)
 
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(10)
+        self.result_title = QtWidgets.QLabel(i18n.t("training.result_title"))
+        self.result_title.setStyleSheet("QLabel{font-size:15px;font-weight:900;color:#0b2a4a;border:none;background:transparent;}")
+        title_row.addWidget(self.result_title)
+        title_row.addStretch(1)
 
-        self.score_badge = QtWidgets.QLabel("-/5")
-        self.score_badge.setAlignment(QtCore.Qt.AlignCenter)
-        self.score_badge.setFixedSize(64, 44)
-        self.score_badge.setStyleSheet("""
-            QLabel{background:#0078D7;color:#fff;border-radius:12px;font-size:16px;font-weight:900;}
+        self.btn_copy_result = QtWidgets.QPushButton()
+        self.btn_copy_result.setFixedSize(30, 30)
+        self.btn_copy_result.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_copy_result.setToolTip(i18n.t("training.copy_result"))
+        self.btn_copy_result.setStyleSheet("""
+            QPushButton { background:#eef3fb; border:1px solid #cfe0f5; border-radius:15px; }
+            QPushButton:hover { background:#dce9fb; }
         """)
-        row.addWidget(self.score_badge)
-
-        self.ai_out = QtWidgets.QLabel("")
-        self.ai_out.setWordWrap(True)
-        self.ai_out.setStyleSheet("QLabel{font-size:12px;font-weight:800;color:#0b2a4a;}")
-        row.addWidget(self.ai_out, 1)
-        rf.addLayout(row)
-
-        self.result_hint = QtWidgets.QLabel("")
-        self.result_hint.setWordWrap(True)
-        self.result_hint.setStyleSheet("QLabel{font-size:11px;color:#3f5d7a;font-weight:700;}")
-        rf.addWidget(self.result_hint)
-
-        self.btn_copy_result = QtWidgets.QPushButton("Скопировать результат")
-        self.btn_copy_result.setFixedHeight(34)
+        self._set_copy_icon()
         self.btn_copy_result.clicked.connect(self._copy_result)
-        rf.addWidget(self.btn_copy_result)
+        title_row.addWidget(self.btn_copy_result)
+
+        rf.addLayout(title_row)
+
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setSpacing(14)
+
+        self.score_badge = QtWidgets.QLabel("-")
+        self.score_badge.setAlignment(QtCore.Qt.AlignCenter)
+        self.score_badge.setFixedSize(64, 64)
+        self.score_badge.setStyleSheet("""
+            QLabel{background:#ffffff;color:#777;border:4px solid #777;border-radius:32px;font-size:26px;font-weight:900;}
+        """)
+        top_row.addWidget(self.score_badge)
+
+        info_col = QtWidgets.QVBoxLayout()
+        info_col.setSpacing(4)
+
+        self.result_ai_line = QtWidgets.QLabel("")
+        self.result_ai_line.setWordWrap(True)
+        self.result_ai_line.setStyleSheet("QLabel{font-size:12px;font-weight:800;color:#0b2a4a;border:none;background:transparent;}")
+        info_col.addWidget(self.result_ai_line)
+
+        self.result_user_line = QtWidgets.QLabel("")
+        self.result_user_line.setWordWrap(True)
+        self.result_user_line.setStyleSheet("QLabel{font-size:12px;font-weight:700;color:#3f5d7a;border:none;background:transparent;}")
+        info_col.addWidget(self.result_user_line)
+
+        top_row.addLayout(info_col, 1)
+        rf.addLayout(top_row)
+
+        divider = QtWidgets.QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background-color:#d6e7ff;border:none;")
+        rf.addWidget(divider)
+
+        match_col = QtWidgets.QVBoxLayout()
+        match_col.setSpacing(4)
+
+        match_title = QtWidgets.QLabel(i18n.t("training.attention_match"))
+        match_title.setStyleSheet("QLabel{font-size:12px;font-weight:800;color:#6d87a3;border:none;background:transparent;}")
+        match_col.addWidget(match_title)
+
+        self.result_match_value = QtWidgets.QLabel("-")
+        self.result_match_value.setStyleSheet("QLabel{font-size:20px;font-weight:900;color:#0b2a4a;border:none;background:transparent;}")
+        match_col.addWidget(self.result_match_value)
+
+        rf.addLayout(match_col)
+
+        self.ai_out = self.result_ai_line
+        self.result_hint = QtWidgets.QLabel("")
+        self.result_hint.setVisible(False)
+        rf.addWidget(self.result_hint)
 
         self.result_frame.setVisible(False)
 
         rl.addWidget(self.result_frame)
-        rl.addWidget(legend_box)
         rl.addStretch(1)
 
         grid.addWidget(right)
@@ -957,14 +1258,14 @@ class TrainingScreen(QtWidgets.QWidget):
         self.btn_ai.setEnabled(step == 2)
 
         if self.step == 0:
-            self.step_hint.setText("Этап 1/4. Начните тренировку, нажав на кнопку \"Начать обучение\".")
+            self.step_hint.setText(i18n.t("training.step_1"))
             self.controls_box.setVisible(False)
             self.result_frame.setVisible(False)
             self.layers_box.setVisible(False)
             self.canvas.set_paint_enabled(False)
             self.btn_start.setEnabled(True)
         elif self.step == 1:
-            self.step_hint.setText("Этап 2/4. Выберите стадию диабетической ретинопатии и отметьте подозрительные области на изображении.")
+            self.step_hint.setText(i18n.t("training.step_2"))
             self.controls_box.setVisible(True)
             self.layers_box.setVisible(False)
             self.result_frame.setVisible(False)
@@ -973,7 +1274,7 @@ class TrainingScreen(QtWidgets.QWidget):
             self.btn_confirm_focus.setEnabled(True)
             self.btn_ai.setEnabled(False)
         elif self.step == 2:
-            self.step_hint.setText("Этап 3/4. Подтвердите выполненную разметку, нажав на кнопку \"Проверить результат\"")
+            self.step_hint.setText(i18n.t("training.step_3"))
             self.controls_box.setVisible(True)
             self.layers_box.setVisible(False)
             self.result_frame.setVisible(False)
@@ -981,7 +1282,7 @@ class TrainingScreen(QtWidgets.QWidget):
             self.btn_confirm_focus.setEnabled(False)
             self.btn_ai.setEnabled(True)
         else:
-            self.step_hint.setText("Этап 4/4. Отлично! Результаты успешно проверены.")
+            self.step_hint.setText(i18n.t("training.step_4"))
             self.btn_start.setEnabled(True)
             self.controls_box.setVisible(False)
             self.layers_box.setVisible(True)
@@ -991,46 +1292,79 @@ class TrainingScreen(QtWidgets.QWidget):
             self.btn_ai.setEnabled(False)
 
     def _pick_random_image(self, folder: str):
-        exts = (".png", ".jpg", ".jpeg", ".bmp")
-        files = []
-        for root, _, fnames in os.walk(folder):
-            for f in fnames:
-                if f.lower().endswith(exts):
-                    files.append(os.path.join(root, f))
-        if not files:
-            return None
-        return random.choice(files)
+            exts = (".png", ".jpg", ".jpeg", ".bmp")
+            class_names = ["No_DR", "Mild", "Moderate", "Severe", "Proliferate_DR"]
+
+            if not self._decks:
+                for cls in class_names:
+                    cls_dir = os.path.join(folder, cls)
+                    files = []
+                    if os.path.isdir(cls_dir):
+                        for f in os.listdir(cls_dir):
+                            if f.lower().endswith(exts):
+                                files.append(os.path.join(cls_dir, f))
+                    random.shuffle(files)
+                    self._decks[cls] = files
+
+            available = [c for c in class_names if self._decks.get(c)]
+            if not available:
+                for cls in class_names:
+                    cls_dir = os.path.join(folder, cls)
+                    files = []
+                    if os.path.isdir(cls_dir):
+                        for f in os.listdir(cls_dir):
+                            if f.lower().endswith(exts):
+                                files.append(os.path.join(cls_dir, f))
+                    random.shuffle(files)
+                    self._decks[cls] = files
+                available = [c for c in class_names if self._decks.get(c)]
+                if not available:
+                    return None
+
+            cls = random.choice(available)
+            return self._decks[cls].pop()
 
     def _start_training(self):
         if not os.path.isdir(self.samples_dir):
             _log.warning("Папка samples не найдена: %s", self.samples_dir)
             RoundedDialog.warning(
-                "Ошибка",
-                "Папка samples не найдена.\nДобавьте изображения в папку samples в корне проекта.",
+                i18n.t("training.no_folder_title"),
+                i18n.t("training.no_folder_text")
             )
             return
 
         imgp = self._pick_random_image(self.samples_dir)
         if not imgp:
             _log.warning("В папке samples нет изображений: %s", self.samples_dir)
-            RoundedDialog.warning("Нет изображений", "В выбранной папке не найдены изображения (png/jpg/jpeg/bmp).")
+            RoundedDialog.warning(
+                i18n.t("training.no_images_title"),
+                i18n.t("training.no_images_text")
+            )
             return
 
         _log.debug("Выбрано изображение для тренировки: %s", imgp)
         bgr = _imread_unicode(imgp)
         if bgr is None:
             _log.error("Не удалось прочитать изображение: %s", imgp)
-            RoundedDialog.warning("Ошибка", "Не удалось открыть изображение.")
+            RoundedDialog.warning(
+                i18n.t("training.no_folder_title"),
+                i18n.t("training.no_image_open")
+            )
             return
 
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         self.image_path = imgp
+        self._last_result_stages = None
         self.canvas.set_image(rgb)
 
         self.result_frame.setVisible(False)
-        self.ai_out.setText("")
-        self.result_hint.setText("")
-        self.score_badge.setText("-/5")
+        self.result_ai_line.setText("")
+        self.result_user_line.setText("")
+        self.result_match_value.setText("-")
+        self.score_badge.setText("-")
+        self.score_badge.setStyleSheet("""
+            QLabel{background:#ffffff;color:#777;border:4px solid #777;border-radius:32px;font-size:26px;font-weight:900;}
+        """)
 
         self.chk_layer_user.setChecked(True)
         self.chk_layer_ai.setChecked(True)
@@ -1053,33 +1387,137 @@ class TrainingScreen(QtWidgets.QWidget):
 
     def _confirm_focus(self):
         if not self.image_path or self.canvas.base_rgb is None:
-            RoundedDialog.warning("Нет изображения", "Сначала начните тренировку и загрузите изображение.")
+            RoundedDialog.warning(
+                i18n.t("training.no_image"),
+                i18n.t("training.start_and_load_image")
+            )
             return
         if not self.canvas.has_user_paint():
-            RoundedDialog.warning("Нужно выделить область", "Перед продолжением выделите область кистью.")
+            RoundedDialog.warning(
+                i18n.t("training.need_select_area"),
+                i18n.t("training.paint_area_first")
+            )
             return
         self._set_step(2)
 
     def _reset_training(self):
+        self._last_result_stages = None
         self.image_path = None
         self.canvas.clear_all()
         self.result_frame.setVisible(False)
-        self.ai_out.setText("")
-        self.result_hint.setText("")
-        self.score_badge.setText("-/5")
+        self.result_ai_line.setText("")
+        self.result_user_line.setText("")
+        self.result_match_value.setText("-")
+        self.score_badge.setText("-")
+        self.score_badge.setStyleSheet("""
+            QLabel{background:#ffffff;color:#777;border:4px solid #777;border-radius:32px;font-size:26px;font-weight:900;}
+        """)
         self._set_step(0)
+
+    def _set_copy_icon(self):
+        pixmap = QtGui.QPixmap(16, 16)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        pen = QtGui.QPen(QtGui.QColor(current_accent()), 1.4)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.drawRoundedRect(QtCore.QRectF(5, 1, 9, 11), 2, 2)
+        painter.drawRoundedRect(QtCore.QRectF(1, 4, 9, 11), 2, 2)
+        painter.end()
+        self.btn_copy_result.setIcon(QtGui.QIcon(pixmap))
+        self.btn_copy_result.setIconSize(QtCore.QSize(16, 16))
+
+    def _set_legend_icon(self, color: str):
+        pixmap = QtGui.QPixmap(20, 20)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter.setPen(QtGui.QPen(QtGui.QColor(color), 2))
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.drawEllipse(1, 1, 18, 18)
+        font = QtGui.QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), QtCore.Qt.AlignCenter, "?")
+        painter.end()
+        self.legend_toggle_btn.setIcon(QtGui.QIcon(pixmap))
+        self.legend_toggle_btn.setIconSize(QtCore.QSize(14, 14))
+
+    def _toggle_legend(self):
+        self._legend_expanded = self.legend_toggle_btn.isChecked()
+
+        try:
+            self._legend_anim.finished.disconnect(
+                self._on_legend_collapsed
+            )
+        except TypeError:
+            pass
+
+        self._legend_anim.stop()
+
+        enabled = QtCore.QSettings(
+            "redictor", "RetinopatiaApp"
+        ).value("animations_enabled", True, type=bool)
+
+        if self._legend_expanded:
+            self.legend_wrapper.setMaximumHeight(16777215)
+            target_height = self.legend_wrapper.sizeHint().height()
+        else:
+            target_height = 0
+
+        self._set_legend_icon(
+            "#ffffff"
+            if self._legend_expanded
+            else current_accent()
+        )
+
+        if not enabled:
+            self.legend_wrapper.setMaximumHeight(target_height)
+            return
+
+        start_height = self.legend_wrapper.height()
+
+        self.legend_wrapper.setMaximumHeight(start_height)
+
+        self._legend_anim.setStartValue(start_height)
+        self._legend_anim.setEndValue(target_height)
+
+        if not self._legend_expanded:
+            self._legend_anim.finished.connect(
+                self._on_legend_collapsed
+            )
+
+        self._legend_anim.start()
+
+    def _on_legend_collapsed(self):
+        self.legend_wrapper.setMaximumHeight(0)
+        try:
+            self._legend_anim.finished.disconnect(self._on_legend_collapsed)
+        except TypeError:
+            pass
 
     def _run_ai_async(self):
         if not self.image_path or self.canvas.base_rgb is None:
-            RoundedDialog.warning("Ошибка", "Сначала начните тренировку")
+            RoundedDialog.warning(
+                i18n.t("training.no_folder_title"),
+                i18n.t("training.first_start_training")
+            )
             return
         if self.step < 2:
-            RoundedDialog.warning("Сначала подтвердите фокус", "Нажмите «Далее: подтвердить фокус» перед запуском ИИ.")
+            RoundedDialog.warning(
+                i18n.t("training.first_confirm_focus"),
+                i18n.t("training.confirm_before_ai")
+            )
             return
 
         self._dlg = LoadingDialog(self)
         self._dlg.show()
-        out_png = os.path.join(tempfile.gettempdir(), "retino_heatmap.png")
+        out_png = os.path.join(
+            tempfile.gettempdir(),
+            f"retino_heatmap_{os.getpid()}_{QtCore.QDateTime.currentMSecsSinceEpoch()}.png"
+        )
 
         self.btn_ai.setEnabled(False)
         self.stage_combo.setEnabled(False)
@@ -1104,16 +1542,72 @@ class TrainingScreen(QtWidgets.QWidget):
             heat = heat_u8.astype(np.float32) / 255.0
 
             um = (self.canvas.user_mask > 0).astype(np.uint8)
-            um_224 = cv2.resize(um, (224, 224), interpolation=cv2.INTER_NEAREST).astype(bool)
-            am_224 = _ai_mask_from_heatmap(heat, top_frac=0.30)
+            um_224 = cv2.resize(
+                um, (224, 224),
+                interpolation=cv2.INTER_NEAREST
+            ).astype(bool)
+
+            fundus_mask = _fundus_mask_from_rgb(self.canvas.base_rgb)
+
+            valid_224 = cv2.resize(
+                fundus_mask.astype(np.uint8),
+                (224, 224),
+                interpolation=cv2.INTER_NEAREST
+            ).astype(bool)
+
+            um_224 &= valid_224
+
+            valid_pixels = int(valid_224.sum())
+
+            user_frac = (
+                float(um_224.sum()) / valid_pixels
+                if valid_pixels else 0.0
+            )
+
+            am_224 = _ai_mask_from_heatmap(
+                heat,
+                top_frac=user_frac,
+                valid_mask=valid_224
+            )
 
             sim = _dice(um_224, am_224)
+
+            _log.debug(
+                "AIS: fundus_pixels=%d, user_frac=%.3f, dice=%.3f",
+                valid_pixels, user_frac, sim
+            )
+
             area_score = _score_1to5_from_similarity(sim)
 
             user_stage = self.stage_combo.currentIndex()
             ai_stage = stage_id
-            diff_stage = abs(user_stage - ai_stage)
+
+            class_to_stage = {
+                "No_DR": 0,
+                "Mild": 1,
+                "Moderate": 2,
+                "Severe": 3,
+                "Proliferate_DR": 4,
+            }
+
+            class_name = os.path.basename(
+                os.path.dirname(self.image_path)
+            )
+
+            if class_name not in class_to_stage:
+                raise ValueError(
+                    f"Неизвестная категория изображения: {class_name}"
+                )
+
+            true_stage = class_to_stage[class_name]
+
+            diff_stage = abs(user_stage - true_stage)
             stage_score = max(1, 5 - diff_stage)
+
+            _log.info(
+                "Оценивание: эталон=%d, ответ=%d, ИИ=%d",
+                true_stage, user_stage, ai_stage
+            )
 
             final_score = int(round(0.8 * stage_score + 0.2 * area_score))
             final_score = max(1, min(5, final_score))
@@ -1139,20 +1633,27 @@ class TrainingScreen(QtWidgets.QWidget):
             self.ai_alpha_slider.setValue(33)
             self.canvas.set_ai_heat(heat, alpha_cam=0.33)
 
-            ai_txt = STAGE_NAMES[ai_stage]
-            user_txt = STAGE_NAMES[user_stage]
+            self._last_result_stages = (ai_stage, user_stage)
+            ai_txt = stage_name(ai_stage)
+            user_txt = stage_name(user_stage)
 
-            self.ai_out.setText(
-                f"Автоматический анализ определил: {ai_txt}.\n"
-                f"Ваш ответ: {user_txt}."
+            self.result_ai_line.setText(
+                i18n.t("training.ai_determined", ai_txt=ai_txt)
             )
-            self.ai_out.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
-            self.result_hint.setText(
-                f"Совпадение области внимания: {sim:.2f} • "
-                f"Уверенность модели: {pmax:.2f}"
+            self.result_user_line.setText(
+                i18n.t("training.your_answer", user_txt=user_txt)
             )
-            self.result_hint.setStyleSheet("QLabel{font-size:11px;font-weight:900;border:none;background:transparent;}")
-            self.score_badge.setText(f"{final_score}/5")
+
+            match_pct = max(0, min(100, round(sim * 100)))
+            self.result_match_value.setText(f"{match_pct}%")
+
+            score_letter = self._score_letter(final_score)
+            letter_color = self._letter_color(score_letter)
+            self.score_badge.setText(score_letter)
+            self.score_badge.setStyleSheet(
+                f"QLabel{{background:#ffffff;color:{letter_color};"
+                f"border:4px solid {letter_color};border-radius:32px;font-size:26px;font-weight:900;}}"
+            )
             self.result_frame.setVisible(True)
             self._set_step(3)
 
@@ -1160,17 +1661,50 @@ class TrainingScreen(QtWidgets.QWidget):
             _log.error("Ошибка обработки результатов ИИ анализа", exc_info=True)
             self._on_ai_fail(str(e))
 
+    def _score_letter(self, score):
+        letters = {1: "F", 2: "D", 3: "C", 4: "B", 5: "A"}
+        try:
+            s = round(float(score))
+        except (TypeError, ValueError):
+            s = 1
+        s = max(1, min(5, s))
+        return letters[s]
+
+    def _letter_color(self, letter):
+        return {
+            "A": "#1e9e4f",
+            "B": "#5bab2f",
+            "C": "#d9a400",
+            "D": "#e07b00",
+            "E": "#e0521f",
+            "F": "#d92b2b",
+        }.get(letter, "#777777")
+
     def _on_ai_fail(self, err: str):
         _log.error("ИИ анализ завершился ошибкой: %s", err)
-        RoundedDialog.warning("Ошибка анализа", "ИИ не смог обработать снимок.\nПопробуйте ещё раз или выберите другое изображение.")
+        RoundedDialog.warning(
+            i18n.t("training.analysis_error_title"),
+            i18n.t("training.analysis_error_text")
+        )
 
     def _copy_result(self):
-        text = (self.ai_out.text().strip() + "\n" + self.result_hint.text().strip()).strip()
+        parts = [
+            self.result_ai_line.text().strip(),
+            self.result_user_line.text().strip(),
+            f"{i18n.t('training.attention_match')}: {self.result_match_value.text()}",
+        ]
+        text = "\n".join(p for p in parts if p)
         if not text:
-            RoundedDialog.warning("Нет результата", "Сначала проверьте результат через ИИ.")
+            RoundedDialog.warning(
+                i18n.t("training.no_result"),
+                i18n.t("training.first_check_ai")
+            )
             return
         QtWidgets.QApplication.clipboard().setText(text)
-        RoundedDialog.info("Готово", "Результат скопирован в буфер обмена.")
+        RoundedDialog.info(
+            i18n.t("training.done_title"),
+            i18n.t("training.result_copied")
+        )
 
     def _on_ai_finally(self):
         if self._dlg is not None:

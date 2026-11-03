@@ -1,6 +1,7 @@
 import datetime
 from PyQt5 import QtWidgets, QtCore, QtGui
-from ui_dialogs import RoundedDialog
+from dialogs.ui_dialogs import RoundedDialog
+import i18n
 
 class HistoryScreen(QtWidgets.QWidget):
     STAGES = [
@@ -14,6 +15,7 @@ class HistoryScreen(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cards_layout = None
+        self._cached_history = None
         self._build()
 
     def _build(self):
@@ -21,7 +23,7 @@ class HistoryScreen(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
 
-        title = QtWidgets.QLabel("История тренировок")
+        title = QtWidgets.QLabel(i18n.t("history.title"))
         title.setStyleSheet("font-size:24px;font-weight:900;color:#202020;")
         root.addWidget(title)
 
@@ -97,6 +99,7 @@ class HistoryScreen(QtWidgets.QWidget):
         root.addWidget(scroll, 1)
 
     def apply_data(self, data):
+        self._cached_history = list(data or [])
         self._clear()
 
         data = list(data or [])
@@ -119,7 +122,7 @@ class HistoryScreen(QtWidgets.QWidget):
             eb = QtWidgets.QVBoxLayout(empty_box)
             eb.setContentsMargins(20, 40, 20, 40)
 
-            empty = QtWidgets.QLabel("Нет данных об истории тренировок")
+            empty = QtWidgets.QLabel(i18n.t("history.no_data"))
             empty.setAlignment(QtCore.Qt.AlignCenter)
             empty.setStyleSheet("font-size:16px;color:#777;font-weight:800;")
 
@@ -133,6 +136,41 @@ class HistoryScreen(QtWidgets.QWidget):
             self.cards_layout.addWidget(self._card(item))
 
         self.cards_layout.addStretch(1)
+
+    def _animate_history_card(self, card, delay=0):
+        effect = QtWidgets.QGraphicsOpacityEffect(card)
+        effect.setOpacity(0.0)
+        card.setGraphicsEffect(effect)
+
+        animation = QtCore.QPropertyAnimation(
+            effect, b"opacity", self
+        )
+        animation.setDuration(480)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(
+            QtCore.QEasingCurve.InOutSine
+        )
+
+        self._card_animations.append(animation)
+        generation = self._history_anim_generation
+
+        def start_animation():
+            if generation != self._history_anim_generation:
+                return
+            animation.start()
+
+        def finish_animation():
+            if generation != self._history_anim_generation:
+                return
+
+            card.setGraphicsEffect(None)
+
+            if animation in self._card_animations:
+                self._card_animations.remove(animation)
+
+        animation.finished.connect(finish_animation)
+        QtCore.QTimer.singleShot(delay, start_animation)
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.Wheel:
@@ -166,14 +204,12 @@ class HistoryScreen(QtWidgets.QWidget):
                 w.deleteLater()
 
     def _card(self, item):
-        training_id = item.get("training_number", "—")
-        score = item.get("score", "—")
+        training_id = item.get("training_number", "-")
+        try:
+            score_letter = self._score_letter(float(item.get("score", 0)))
+        except (TypeError, ValueError):
+            score_letter = "-"
         correct_stage = self._stage(item.get("ai_stage"))
-        teacher_comment = (
-            item.get("teacher_comment")
-            or item.get("comment")
-            or f"Тестовый комментарий к тренировке №{training_id}."
-        )
         date = self._date(item.get("ts"))
 
         card = QtWidgets.QFrame()
@@ -196,7 +232,9 @@ class HistoryScreen(QtWidgets.QWidget):
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(4)
 
-        title = QtWidgets.QLabel(f"Тренировка №{training_id}")
+        title = QtWidgets.QLabel(
+            i18n.t("history.training_number", training_id=training_id)
+        )
         title.setStyleSheet("font-size: 15px; font-weight: 900; color: #111827;")
 
         date_label = QtWidgets.QLabel(date)
@@ -204,35 +242,10 @@ class HistoryScreen(QtWidgets.QWidget):
 
         left.addWidget(title)
         left.addWidget(date_label)
-
         layout.addLayout(left, 2)
 
-        self._info(layout, "Результат", f"{score}/5", big=True)
-        self._info(layout, "Верная стадия", correct_stage)
-
-        info_btn = QtWidgets.QPushButton()
-        info_btn.setIcon(QtGui.QIcon("assets/icons/info.png"))
-        info_btn.setIconSize(QtCore.QSize(20, 20))
-        info_btn.setFixedSize(38, 38)
-        info_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        info_btn.setEnabled(bool(teacher_comment.strip()))
-        info_btn.setStyleSheet("""
-            QPushButton {
-                background: #eef6ff;
-                border: 1px solid #cfe6ff;
-                border-radius: 19px;
-            }
-            QPushButton:hover {
-                background: #dff0ff;
-                border: 1px solid #9dd0ff;
-            }
-            QPushButton:disabled {
-                background: #f3f4f6;
-                border: 1px solid #e5e7eb;
-            }
-        """)
-        info_btn.clicked.connect(lambda: self._show_comment(teacher_comment))
-        layout.addWidget(info_btn)
+        self._grade_badge(layout, i18n.t("history.result"), score_letter)
+        self._info(layout, i18n.t("history.final_stage"), correct_stage)
 
         return card
     
@@ -242,7 +255,7 @@ class HistoryScreen(QtWidgets.QWidget):
             return
 
         RoundedDialog.info(
-            "Комментарий учителя",
+            i18n.t("history.teacher_comment"),
             comment
         )
 
@@ -266,18 +279,69 @@ class HistoryScreen(QtWidgets.QWidget):
 
         layout.addLayout(box, 1)
 
+    def _grade_badge(self, layout, title, letter):
+        box = QtWidgets.QVBoxLayout()
+        box.setSpacing(3)
+
+        t = QtWidgets.QLabel(title)
+        t.setStyleSheet("font-size: 11px; font-weight: 800; color: #8a94a6;")
+
+        color = self._letter_color(letter)
+
+        badge = QtWidgets.QLabel(letter)
+        badge.setFixedSize(40, 40)
+        badge.setAlignment(QtCore.Qt.AlignCenter)
+        badge.setStyleSheet(f"""
+            QLabel {{
+                font-size: 18px;
+                font-weight: 900;
+                color: {color};
+                border: 3px solid {color};
+                border-radius: 20px;
+                background: transparent;
+            }}
+        """)
+
+        box.addWidget(t)
+        box.addWidget(badge, 0, QtCore.Qt.AlignLeft)
+
+        layout.addLayout(box, 1)
+
+    def _score_letter(self, score):
+        letters = {1: "F", 2: "D", 3: "C", 4: "B", 5: "A"}
+        try:
+            s = round(float(score))
+        except (TypeError, ValueError):
+            s = 1
+        s = max(1, min(5, s))
+        return letters[s]
+
+    def _letter_color(self, letter):
+        return {
+            "A": "#1e9e4f",
+            "B": "#5bab2f",
+            "C": "#d9a400",
+            "D": "#e07b00",
+            "E": "#e0521f",
+            "F": "#d92b2b",
+        }.get(letter, "#777777")
+
     def _stage(self, value):
         try:
-            return self.STAGES[int(value)]
-        except Exception:
-            return "—"
+            stage = int(value)
+            if 0 <= stage <= 4:
+                return i18n.t(f"stages.{stage}")
+        except (ValueError, TypeError):
+            pass
+
+        return "-"
 
     def _date(self, value):
         if not value:
-            return "Дата неизвестна"
+            return i18n.t("history.unknown_date")
 
         try:
             dt = datetime.datetime.fromisoformat(str(value).replace("Z", "").replace("T", " "))
             return dt.strftime("%d.%m.%Y %H:%M")
-        except Exception:
-            return str(value).replace("T", " ")
+        except (TypeError, ValueError):
+            return i18n.t("history.unknown_date")
