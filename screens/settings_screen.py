@@ -1,24 +1,267 @@
 import datetime
+import i18n
+from dialogs.language_dialog import LanguageDialog
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtCore import pyqtSignal
 from api_client import reset_training_history, logout
-from ui_dialogs import RoundedDialog, ConfirmDialog, ChangePasswordDialog, ApiWorker
+from dialogs.ui_dialogs import RoundedDialog, ConfirmDialog, ChangePasswordDialog, ApiWorker, SecretKeyDialog
 import app_logger
 from main import current_v
 
 _log = app_logger.get("screens.settings")
 
+class AnimatedLanguageSwitcher(QtWidgets.QWidget):
+    language_requested = QtCore.pyqtSignal(str)
+
+    CLOSED_W = 79
+    OPEN_W = 236
+    HEIGHT = 38
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._expanded = False
+
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed,
+            QtWidgets.QSizePolicy.Fixed
+        )
+
+        self._left = self._make_button()
+        self._middle = self._make_button()
+        self._current = self._make_button()
+
+        self._current.setIcon(self._globe_icon())
+        self._current.setIconSize(QtCore.QSize(17, 17))
+
+        self._current.clicked.connect(self._toggle)
+        self._left.clicked.connect(
+            lambda checked=False: self._choose(self._other_codes[0])
+        )
+        self._middle.clicked.connect(
+            lambda checked=False: self._choose(self._other_codes[1])
+        )
+
+        self._animation = QtCore.QVariantAnimation(self)
+        self._animation.valueChanged.connect(self._change_width)
+
+        self._globe_opacity = 1.0
+
+        self._globe_animation = QtCore.QVariantAnimation(self)
+        self._globe_animation.valueChanged.connect(
+            self._set_globe_opacity
+        )
+
+        self.setFixedSize(self.CLOSED_W, self.HEIGHT)
+        self._refresh_labels()
+        self._position_buttons()
+
+    def _make_button(self):
+        button = QtWidgets.QPushButton(self)
+        button.setCursor(QtCore.Qt.PointingHandCursor)
+
+        button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #172033;
+                border: none;
+                border-radius: 18px;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 650;
+            }
+            QPushButton:hover {
+                background: #E8F4FC;
+            }
+            QPushButton:pressed {
+                background: #D5EAFA;
+            }
+        """)
+
+        return button
+
+    def _globe_icon(self):
+        pixmap = QtGui.QPixmap(18, 18)
+        pixmap.fill(QtCore.Qt.transparent)
+
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(
+            QtGui.QPen(QtGui.QColor("#111827"), 1.5)
+        )
+
+        painter.drawEllipse(QtCore.QRectF(2, 2, 14, 14))
+        painter.drawEllipse(QtCore.QRectF(6.5, 2, 5, 14))
+        painter.drawLine(
+            QtCore.QPointF(2, 9),
+            QtCore.QPointF(16, 9)
+        )
+        painter.end()
+
+        return QtGui.QIcon(pixmap)
+
+    def _set_globe_opacity(self, value):
+        opacity = max(0.0, min(1.0, float(value)))
+        self._globe_opacity = opacity
+
+        if opacity <= 0.001:
+            self._current.setIcon(QtGui.QIcon())
+            self._current.setIconSize(QtCore.QSize(0, 0))
+            return
+
+        pixmap = QtGui.QPixmap(18, 18)
+        pixmap.fill(QtCore.Qt.transparent)
+
+        painter = QtGui.QPainter(pixmap)
+        painter.setOpacity(opacity)
+        painter.drawPixmap(
+            0, 0,
+            self._globe_icon().pixmap(18, 18)
+        )
+        painter.end()
+
+        icon_size = max(1, round(17 * opacity))
+
+        self._current.setIcon(QtGui.QIcon(pixmap))
+        self._current.setIconSize(
+            QtCore.QSize(icon_size, icon_size)
+        )
+
+    def _refresh_labels(self):
+        names = {
+            "ru": "RU",
+            "en": "EN",
+            "zh": "中文"
+        }
+
+        current = i18n.get_current_language()
+
+        self._other_codes = [
+            code for code in ("zh", "ru", "en")
+            if code != current
+        ]
+
+        self._left.setText(names[self._other_codes[0]])
+        self._middle.setText(names[self._other_codes[1]])
+        self._current.setText(" " + names[current])
+
+        self._set_globe_opacity(
+            0.0 if self._expanded else 1.0
+        )
+        self._current.show()
+        self._current.raise_()
+
+    def _position_buttons(self):
+        x = self.width() - 78
+        h = self.HEIGHT - 2
+
+        self._left.setGeometry(x - 157, 1, 81, h)
+        self._middle.setGeometry(x - 76, 1, 76, h)
+        self._current.setGeometry(x, 1, 77, h)
+
+        self._current.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_buttons()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+        painter.setPen(
+            QtGui.QPen(QtGui.QColor("#C9E2F7"), 1)
+        )
+        painter.setBrush(QtGui.QColor("#FFFFFF"))
+
+        painter.drawRoundedRect(
+            QtCore.QRectF(
+                0.5, 0.5,
+                self.width() - 1,
+                self.height() - 1
+            ),
+            19, 19
+        )
+        painter.end()
+
+    def _change_width(self, width):
+        self.setFixedWidth(int(width))
+
+    def collapse(self):
+        self._animation.stop()
+        self._expanded = False
+        self._globe_animation.stop()
+        self._set_globe_opacity(1.0)
+        self.setFixedWidth(self.CLOSED_W)
+        self._position_buttons()
+
+    def _toggle(self):
+        self._animate(not self._expanded)
+
+    def _animate(self, expanded):
+        self._expanded = expanded
+
+        self._globe_animation.stop()
+
+        self._globe_animation.setStartValue(
+            self._globe_opacity
+        )
+        self._globe_animation.setEndValue(
+            0.0 if expanded else 1.0
+        )
+
+        self._globe_animation.setDuration(
+            180 if expanded else 250
+        )
+
+        self._globe_animation.setEasingCurve(
+            QtCore.QEasingCurve.InOutCubic
+        )
+
+        self._globe_animation.start()
+
+        self._animation.stop()
+        self._animation.setStartValue(self.width())
+        self._animation.setEndValue(
+            self.OPEN_W if expanded else self.CLOSED_W
+        )
+
+        self._animation.setDuration(
+            350 if expanded else 280
+        )
+
+        self._animation.setEasingCurve(
+            QtCore.QEasingCurve.OutBack
+            if expanded
+            else QtCore.QEasingCurve.InOutCubic
+        )
+
+        self._animation.start()
+
+    def _choose(self, code):
+        if code == i18n.get_current_language():
+            self._animate(False)
+            return
+
+        self._animate(False)
+
+        QtCore.QTimer.singleShot(
+            310,
+            lambda: self.language_requested.emit(code)
+        )
 
 class SettingsScreen(QtWidgets.QWidget):
     logout_requested = pyqtSignal()
     stats_reset = pyqtSignal()
     refresh_requested = QtCore.pyqtSignal()
+    dev_mode_trigger = pyqtSignal()
 
     def __init__(self, username: str, parent=None):
         super().__init__(parent)
         self.username = username
         self._account_status = {"is_verified": False, "created_at": None}
         self._reset_worker = None
+        self._logout_worker = None
         self._build()
 
     def _build(self):
@@ -27,9 +270,26 @@ class SettingsScreen(QtWidgets.QWidget):
         l.setContentsMargins(0, 0, 0, 0)
         l.setSpacing(14)
 
-        title = QtWidgets.QLabel("Настройки")
-        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #222;")
-        l.addWidget(title)
+        title = QtWidgets.QLabel(i18n.t("settings.title"))
+        title.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: #222;"
+        )
+
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(10)
+
+        header_row.addWidget(title)
+        header_row.addStretch(1)
+
+        self.language_switch = AnimatedLanguageSwitcher(self)
+        self.language_switch.language_requested.connect(
+            self._request_language_change
+        )
+        header_row.addWidget(self.language_switch)
+
+        l.addLayout(header_row)
+
 
         profile = QtWidgets.QFrame()
         profile.setStyleSheet("""
@@ -76,7 +336,7 @@ class SettingsScreen(QtWidgets.QWidget):
             QLabel { background-color: #22c55e; color: white; border-radius: 9px; font-size: 12px; font-weight: 800; }
         """)
 
-        verified_text = QtWidgets.QLabel("Аккаунт верифицирован")
+        verified_text = QtWidgets.QLabel(i18n.t("settings.account_verified"))
         verified_text.setStyleSheet("font-size: 13px; color: #16a34a; font-weight: 700;")
 
         self.settings_verify_icon = check
@@ -104,10 +364,10 @@ class SettingsScreen(QtWidgets.QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(10)
 
-        org_title = QtWidgets.QLabel("Организация")
+        org_title = QtWidgets.QLabel(i18n.t("settings.organization"))
         org_title.setStyleSheet("font-size:16px;font-weight:900;color:#111827;")
 
-        self.settings_license_badge = QtWidgets.QLabel("Учебная лицензия")
+        self.settings_license_badge = QtWidgets.QLabel(i18n.t("settings.academic_license"))
         self.settings_license_badge.setStyleSheet("""
             QLabel {
                 background-color: #e0f2fe; color: #0369a1;
@@ -145,10 +405,22 @@ class SettingsScreen(QtWidgets.QWidget):
         grid.setHorizontalSpacing(46)
         grid.setVerticalSpacing(16)
 
-        org_name_widget, self.settings_org_lbl = org_item("Название", "Не назначена")
-        course_widget, self.settings_course_lbl = org_item("Курс и Группа", "Не указано")
-        access_widget, self.settings_access_lbl = org_item("Доступ до", "Не указано")
-        support_widget, self.settings_support_lbl = org_item("Поддержка", "Не указано")
+        org_name_widget, self.settings_org_lbl = org_item(
+            i18n.t("settings.org_name"),
+            i18n.t("settings.not_assigned_f")
+        )
+        course_widget, self.settings_course_lbl = org_item(
+            i18n.t("settings.course_group"),
+            i18n.t("settings.not_specified")
+        )
+        access_widget, self.settings_access_lbl = org_item(
+            i18n.t("settings.access_until"),
+            i18n.t("settings.not_specified")
+        )
+        support_widget, self.settings_support_lbl = org_item(
+            i18n.t("settings.teacher"),
+            i18n.t("settings.not_assigned_m")
+        )
 
         grid.addWidget(org_name_widget, 0, 0)
         grid.addWidget(course_widget, 0, 1)
@@ -158,7 +430,7 @@ class SettingsScreen(QtWidgets.QWidget):
         org_layout.addLayout(grid)
         l.addWidget(org_box)
 
-        change_pwd_btn = QtWidgets.QPushButton("Сменить пароль")
+        change_pwd_btn = QtWidgets.QPushButton(i18n.t("settings.change_password"))
         change_pwd_btn.setFixedHeight(38)
         change_pwd_btn.setStyleSheet("""
             QPushButton {
@@ -170,7 +442,7 @@ class SettingsScreen(QtWidgets.QWidget):
         change_pwd_btn.clicked.connect(self._change_password)
         l.addWidget(change_pwd_btn, alignment=QtCore.Qt.AlignLeft)
 
-        logout_btn = QtWidgets.QPushButton("Выйти из аккаунта")
+        logout_btn = QtWidgets.QPushButton(i18n.t("settings.logout"))
         logout_btn.setFixedHeight(38)
         logout_btn.setStyleSheet("""
             QPushButton {
@@ -182,7 +454,7 @@ class SettingsScreen(QtWidgets.QWidget):
         logout_btn.clicked.connect(self._logout_action)
         l.addWidget(logout_btn, alignment=QtCore.Qt.AlignLeft)
 
-        self.btn_refresh_data = QtWidgets.QPushButton("Обновить данные")
+        self.btn_refresh_data = QtWidgets.QPushButton(i18n.t("settings.update_data"))
         self.btn_refresh_data.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_refresh_data.setFixedHeight(38)
         self.btn_refresh_data.setStyleSheet("""
@@ -197,37 +469,114 @@ class SettingsScreen(QtWidgets.QWidget):
 
         l.addStretch(1)
 
-        footer = QtWidgets.QLabel(f"by redictor, 2026 • MIT License • {current_v}")
+        footer = QtWidgets.QLabel(f"by redictor, 2026 • Custom Non-Commercial License • {current_v}")
         footer.setAlignment(QtCore.Qt.AlignCenter)
         footer.setStyleSheet("font-size: 11px; color: #8a8a8a;")
         l.addWidget(footer)
 
+        self._footer_click_count = 0
+        self._footer_click_timer = QtCore.QTimer(self)
+        self._footer_click_timer.setSingleShot(True)
+        self._footer_click_timer.timeout.connect(self._reset_footer_clicks)
+        footer.mousePressEvent = self._on_footer_click
+
+        self._konami_sequence = [
+            QtCore.Qt.Key_Up, QtCore.Qt.Key_Down,
+            QtCore.Qt.Key_Up, QtCore.Qt.Key_Up,
+            QtCore.Qt.Key_Down, QtCore.Qt.Key_Left,
+        ]
+        self._konami_progress = 0
+        self._konami_active = False
+        self._konami_timer = QtCore.QTimer(self)
+        self._konami_timer.setSingleShot(True)
+        self._konami_timer.timeout.connect(self._reset_konami)
+
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+
+    def _reset_footer_clicks(self):
+        self._footer_click_count = 0
+
+    def _request_language_change(self, code):
+        window = self.window()
+        if hasattr(window, "change_app_language"):
+            window.change_app_language(code)
+
+    def hideEvent(self, event):
+        switch = getattr(self, "language_switch", None)
+
+        if switch is not None:
+            switch.collapse()
+
+        super().hideEvent(event)
+
+    def _on_footer_click(self, event):
+        self._footer_click_count += 1
+        self._footer_click_timer.start(3000)
+        if self._footer_click_count >= 7:
+            self._footer_click_count = 0
+            self._footer_click_timer.stop()
+            self._konami_active = True
+            self._konami_progress = 0
+            self.setFocus()
+            self._konami_timer.start(5000)
+
+    def _reset_konami(self):
+        self._konami_active = False
+        self._konami_progress = 0
+
+    def keyPressEvent(self, event):
+        if self._konami_active:
+            expected = self._konami_sequence[self._konami_progress]
+            if event.key() == expected:
+                self._konami_progress += 1
+                self._konami_timer.start(5000)
+                if self._konami_progress >= len(self._konami_sequence):
+                    self._konami_active = False
+                    self._konami_progress = 0
+                    self._open_secret_dialog()
+                event.accept()
+                return
+            else:
+                self._konami_active = False
+                self._konami_progress = 0
+        super().keyPressEvent(event)
+
+    def _open_secret_dialog(self):
+        word = SecretKeyDialog.ask_word(self.window())
+        if word.strip().lower() == "redictor":
+            self.dev_mode_trigger.emit()
+
     def _change_password(self):
-        ChangePasswordDialog.run(self, self.username)
+        ChangePasswordDialog.run(self.window(), self.username)
 
     def _logout_action(self):
         ok = ConfirmDialog.ask(
-            "Выход из аккаунта",
-            "Вы действительно хотите выйти из аккаунта?",
-            confirm_text="Выйти",
-            cancel_text="Отмена",
+            i18n.t("settings.logout_confirm_title"),
+            i18n.t("settings.logout_confirm_text"),
+            confirm_text=i18n.t("settings.logout"),
+            cancel_text=i18n.t("settings.cancel"),
             danger=False,
         )
         if not ok:
             return
-        try:
-            logout()
-            _log.info("Пользователь вышел из аккаунта: %s", self.username)
-        except Exception:
-            _log.warning("Ошибка при выходе из аккаунта", exc_info=True)
+        if self._logout_worker is not None and self._logout_worker.isRunning():
+            return
+        worker = ApiWorker(logout)
+        self._logout_worker = worker
+        worker.finished.connect(self._on_logout_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_logout_finished(self):
+        _log.info("Пользователь вышел из аккаунта: %s", self.username)
         self.logout_requested.emit()
 
     def _on_reset_training(self):
         ok = ConfirmDialog.ask(
-            "Сброс статистики",
-            "Сбросить всю статистику тренировок?\n\nЭто действие нельзя отменить.",
-            confirm_text="Сбросить",
-            cancel_text="Отмена",
+            i18n.t("settings.reset_stats"),
+            i18n.t("settings.reset_confirm_text"),
+            confirm_text=i18n.t("settings.reset_button"),
+            cancel_text=i18n.t("settings.cancel"),
             danger=True
         )
         if not ok:
@@ -235,7 +584,10 @@ class SettingsScreen(QtWidgets.QWidget):
 
         w = ApiWorker(reset_training_history)
         w.ok.connect(self._on_reset_ok)
-        w.fail.connect(lambda _: RoundedDialog.warning("Ошибка", "Не удалось сбросить статистику.\nПопробуйте позже."))
+        w.fail.connect(lambda _: RoundedDialog.warning(
+            i18n.t("settings.error"),
+            i18n.t("settings.reset_error")
+        ))
         w.finished.connect(w.deleteLater)
         w.start()
         self._reset_worker = w
@@ -243,11 +595,17 @@ class SettingsScreen(QtWidgets.QWidget):
     def _on_reset_ok(self, result: bool):
         if result:
             _log.info("Статистика тренировок сброшена: %s", self.username)
-            RoundedDialog.info("Готово", "Статистика тренировок успешно сброшена.")
+            RoundedDialog.info(
+                i18n.t("settings.done"),
+                i18n.t("settings.reset_success")
+            )
             self.stats_reset.emit()
         else:
             _log.warning("Сброс статистики не удался (сервер вернул False)")
-            RoundedDialog.warning("Ошибка", "Не удалось сбросить статистику.\nПопробуйте позже.")
+            RoundedDialog.warning(
+                i18n.t("settings.error"),
+                i18n.t("settings.reset_error")
+            )
 
     def apply_profile(self, profile):
         try:
@@ -256,18 +614,33 @@ class SettingsScreen(QtWidgets.QWidget):
 
             self.settings_header_name_lbl.setText(display_name)
             self.settings_header_login_lbl.setText(f"@{self.username}")
-            self.settings_org_lbl.setText(profile.get("organization_name") or "Не назначена")
-            self.settings_course_lbl.setText(profile.get("course_group") or "Не указано")
-            self.settings_access_lbl.setText(profile.get("access_expires_at") or "Не указано")
-            self.settings_support_lbl.setText(profile.get("support_contact") or "Не указано")
-            self.settings_license_badge.setText(profile.get("license_type") or "Учебная лицензия")
+            self.settings_org_lbl.setText(
+                profile.get("organization_name") or i18n.t("settings.not_assigned_f")
+            )
+            self.settings_course_lbl.setText(
+                profile.get("course_group") or i18n.t("settings.not_specified")
+            )
+            self.settings_access_lbl.setText(
+                profile.get("access_expires_at") or i18n.t("settings.not_specified")
+            )
+            self.settings_support_lbl.setText(
+                profile.get("teacher_display_name") or i18n.t("settings.not_assigned_m")
+            )
+            license_type = profile.get("license_type")
+
+            self.settings_license_badge.setText(
+                i18n.t("settings.academic_license")
+                if not license_type or license_type == "Учебная лицензия"
+                else license_type
+            )
 
             created_at = profile.get("created_at")
             is_verified = False
             if created_at:
-                s = str(created_at).replace("Z", "").replace(" ", "T")
+                s = str(created_at).replace("Z", "+00:00").replace(" ", "T")
                 created = datetime.datetime.fromisoformat(s)
-                is_verified = (datetime.datetime.now() - created).total_seconds() >= 24 * 60 * 60
+                now = datetime.datetime.now(created.tzinfo)
+                is_verified = (now - created).total_seconds() >= 24 * 60 * 60
 
             self._account_status = {"is_verified": is_verified, "created_at": created_at}
             self._apply_account_status_ui()
@@ -282,12 +655,16 @@ class SettingsScreen(QtWidgets.QWidget):
             self.settings_verify_icon.setStyleSheet("""
                 QLabel { background-color: #22c55e; color: white; border-radius: 9px; font-size: 12px; font-weight: 800; }
             """)
-            self.settings_verified_text.setText("Аккаунт верифицирован")
+            self.settings_verified_text.setText(
+                i18n.t("settings.account_verified")
+            )
             self.settings_verified_text.setStyleSheet("font-size: 13px; color: #16a34a; font-weight: 700;")
         else:
             self.settings_verify_icon.setText("!")
             self.settings_verify_icon.setStyleSheet("""
                 QLabel { background-color: #f59e0b; color: white; border-radius: 9px; font-size: 12px; font-weight: 800; }
             """)
-            self.settings_verified_text.setText("Аккаунт будет автоматически верифицирован через 24 часа после регистрации")
+            self.settings_verified_text.setText(
+                i18n.t("settings.verification_pending")
+            )
             self.settings_verified_text.setStyleSheet("font-size: 13px; color: #d97706; font-weight: 700;")

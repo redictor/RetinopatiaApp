@@ -1,11 +1,3 @@
-"""Centralized logging for RetinopatiaApp.
-
-Usage in any module:
-    import app_logger
-    log = app_logger.get(__name__)
-    log.info("something happened")
-    log.error("something failed", exc_info=True)
-"""
 import logging
 import os
 import sys
@@ -13,7 +5,6 @@ from logging.handlers import RotatingFileHandler
 
 _LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 _initialized = False
-
 
 def setup() -> logging.Logger:
     """Initialize file + console logging. Safe to call multiple times."""

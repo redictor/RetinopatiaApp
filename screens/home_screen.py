@@ -1,11 +1,11 @@
 import datetime
 from PyQt5 import QtWidgets, QtCore, QtGui
-from ui_dialogs import ApiWorker
+from dialogs.ui_dialogs import ApiWorker
 from api_client import get_updates
 import app_logger
+import i18n
 
 _log = app_logger.get("screens.home")
-
 
 class HomeScreen(QtWidgets.QWidget):
     def __init__(self, username: str, parent=None):
@@ -13,6 +13,8 @@ class HomeScreen(QtWidgets.QWidget):
         self.username = username
         self._updates_layout = None
         self._updates_worker = None
+        self._cached_stats = None
+        self._cached_updates = None
         self._build()
 
     def _ru_plural(self, n: int, one: str, few: str, many: str) -> str:
@@ -27,38 +29,42 @@ class HomeScreen(QtWidgets.QWidget):
 
     def _home_greeting(self, name: str) -> str:
         hour = datetime.datetime.now().hour
+
         if 5 <= hour < 12:
-            greeting = "Доброе утро"
+            key = "home.greeting_morning"
         elif 12 <= hour < 18:
-            greeting = "Добрый день"
+            key = "home.greeting_day"
         elif 18 <= hour < 23:
-            greeting = "Добрый вечер"
+            key = "home.greeting_evening"
         else:
-            greeting = "Доброй ночи"
-        return f"{greeting}, {name}!"
+            key = "home.greeting_night"
+
+        return f"{i18n.t(key)}, {name}!"
 
     def _format_ago(self, ts_iso: str) -> str:
         if not ts_iso or ts_iso == "-":
             return "-"
+
         try:
             s = str(ts_iso).replace("Z", "").replace(" ", "T")
-            t = datetime.datetime.fromisoformat(s)
-        except Exception:
+            dt = datetime.datetime.fromisoformat(s)
+            now = datetime.datetime.now(dt.tzinfo) if dt.tzinfo else datetime.datetime.now()
+            seconds = max(0, int((now - dt).total_seconds()))
+        except (ValueError, TypeError):
             return "-"
-        now = datetime.datetime.now()
-        delta = now - t
-        secs = int(delta.total_seconds())
-        if secs < 0:
-            secs = 0
-        mins = secs // 60
-        if mins < 60:
-            m = max(1, mins)
-            return f"{m} {self._ru_plural(m, 'минуту', 'минуты', 'минут')} назад"
-        hours = mins // 60
+
+        minutes = seconds // 60
+
+        if minutes < 60:
+            n = max(1, minutes)
+            return i18n.t("home.minutes_ago", minutes=n)
+
+        hours = minutes // 60
+
         if hours < 24:
-            return f"{hours} {self._ru_plural(hours, 'час', 'часа', 'часов')} назад"
-        days = hours // 24
-        return f"{days} {self._ru_plural(days, 'день', 'дня', 'дней')} назад"
+            return i18n.t("home.hours_ago", hours=hours)
+
+        return i18n.t("home.days_ago", days=hours // 24)
 
     def _build(self):
         self.setStyleSheet("QLabel { border: none; background: transparent; }")
@@ -76,7 +82,7 @@ class HomeScreen(QtWidgets.QWidget):
         self.home_title_label.setStyleSheet("font-size: 20px; font-weight: 800; color: #222;")
         left.addWidget(self.home_title_label)
 
-        subtitle = QtWidgets.QLabel("Тренируйтесь определять диабетическую ретинопатию и её стадию по снимкам.")
+        subtitle = QtWidgets.QLabel(i18n.t("home.subtitle"))
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 13px; color: #555;")
         left.addWidget(subtitle)
@@ -133,16 +139,22 @@ class HomeScreen(QtWidgets.QWidget):
             cl.addWidget(h)
             return c, v
 
-        c1, self.home_last_activity_lbl = stat_card("Последняя активность", "-", "Дата последней тренировки")
-        c2, self.home_eff_lbl = stat_card("Эффективность", "-%", "Средняя точность ответов")
-        c3, self.home_total_lbl = stat_card("Проведено тренировок", "-", "Количество решённых заданий")
+        c1, self.home_last_activity_lbl = stat_card(
+            i18n.t("home.last_activity"), "-", i18n.t("home.last_training_date")
+        )
+        c2, self.home_eff_lbl = stat_card(
+            i18n.t("home.efficiency"), "-%", i18n.t("home.avg_accuracy")
+        )
+        c3, self.home_total_lbl = stat_card(
+            i18n.t("home.trainings_done"), "-", i18n.t("home.tasks_solved")
+        )
 
         cards.addWidget(c1)
         cards.addWidget(c2)
         cards.addWidget(c3)
         l.addLayout(cards)
 
-        actions_title = QtWidgets.QLabel("Быстрые действия")
+        actions_title = QtWidgets.QLabel(i18n.t("home.quick_actions"))
         actions_title.setStyleSheet("font-size:14px;font-weight:800;color:#222;border:none;background:transparent;")
         l.addWidget(actions_title)
 
@@ -178,10 +190,10 @@ class HomeScreen(QtWidgets.QWidget):
             """)
             return btn
 
-        self.btn_start_training = big_action("Начать обучение", "assets/icons/training.png", primary=True)
-        self.btn_open_stats = big_action("Открыть статистику", "assets/icons/stats.png", primary=False)
-        self.btn_open_history = big_action("Открыть историю", "assets/icons/history.png", primary=False)
-        self.btn_open_settings = big_action("Настройки", "assets/icons/settings.png", primary=False)
+        self.btn_start_training = big_action(i18n.t("home.start_training"), "assets/icons/training.png", primary=True)
+        self.btn_open_stats = big_action(i18n.t("home.open_stats"), "assets/icons/stats.png", primary=False)
+        self.btn_open_history = big_action(i18n.t("home.open_history"), "assets/icons/history.png", primary=False)
+        self.btn_open_settings = big_action(i18n.t("home.settings"), "assets/icons/settings.png", primary=False)
 
         ab.addWidget(self.btn_start_training)
         ab.addWidget(self.btn_open_stats)
@@ -199,7 +211,7 @@ class HomeScreen(QtWidgets.QWidget):
         ul.setContentsMargins(16, 14, 16, 14)
         ul.setSpacing(10)
 
-        updates_title = QtWidgets.QLabel("Список обновлений")
+        updates_title = QtWidgets.QLabel(i18n.t("home.updates_list"))
         updates_title.setStyleSheet("font-size:14px;font-weight:800;color:#222;border:none;background:transparent;")
         ul.addWidget(updates_title)
 
@@ -221,20 +233,9 @@ class HomeScreen(QtWidgets.QWidget):
         il.setSpacing(4)
         self._updates_layout = il
 
-        loading = QtWidgets.QLabel("Загрузка обновлений…")
+        loading = QtWidgets.QLabel(i18n.t("home.loading_updates"))
         loading.setStyleSheet("QLabel { font-size: 12px; color: #777; padding: 10px; }")
         il.addWidget(loading)
-
-        def _on_updates_fail(err):
-            _log.debug("Ошибка загрузки обновлений на главной: %s", err)
-            self.apply_updates([])
-
-        worker = ApiWorker(get_updates)
-        worker.ok.connect(self.apply_updates)
-        worker.fail.connect(_on_updates_fail)
-        worker.finished.connect(worker.deleteLater)
-        worker.start()
-        self._updates_worker = worker
 
         il.addStretch(1)
         scroll.setWidget(inner)
@@ -274,12 +275,13 @@ class HomeScreen(QtWidgets.QWidget):
         return super().eventFilter(obj, event)
 
     def apply_stats(self, data):
+        self._cached_stats = list(data or [])
         try:
             data = data or []
             total = len(data)
 
             if total == 0:
-                self.home_last_activity_lbl.setText("")
+                self.home_last_activity_lbl.setText("-")
                 self.home_eff_lbl.setText("-%")
                 self.home_total_lbl.setText("0")
                 return
@@ -300,20 +302,49 @@ class HomeScreen(QtWidgets.QWidget):
 
             avg_score = sum(scores) / len(scores) if scores else 0.0
             eff = int(round(avg_score / 5 * 100)) if scores else 0
+            eff_letter = self._eff_letter(eff) if scores else "-"
 
             self.home_last_activity_lbl.setText(self._format_ago(last_time) if last_time != "-" else "-")
-            self.home_eff_lbl.setText(f"{eff}%")
+            self.home_eff_lbl.setText(eff_letter)
             self.home_total_lbl.setText(str(total))
         except Exception:
             _log.error("Ошибка применения статистики на главный экран", exc_info=True)
 
+    def _eff_letter(self, pct):
+        if pct >= 90:
+            return "A"
+        if pct >= 80:
+            return "B"
+        if pct >= 70:
+            return "C"
+        if pct >= 60:
+            return "D"
+        if pct >= 50:
+            return "E"
+        return "F"
+
     def apply_updates(self, updates):
+        self._cached_updates = list(updates or [])
         if self._updates_layout is None:
             return
 
+        import re
+
+        def update_sort_key(upd):
+            version = str(upd.get("version") or "")
+            numbers = [int(n) for n in re.findall(r"\d+", version)]
+            numbers = (numbers + [0, 0, 0])[:3]
+
+            try:
+                update_id = int(upd.get("id") or 0)
+            except (TypeError, ValueError):
+                update_id = 0
+
+            return (*numbers, update_id)
+
         updates = sorted(
             updates or [],
-            key=lambda u: int(u.get("id", 0) or 0),
+            key=update_sort_key,
             reverse=True
         )
 
@@ -324,7 +355,7 @@ class HomeScreen(QtWidgets.QWidget):
                 widget.deleteLater()
 
         if not updates:
-            empty = QtWidgets.QLabel("Обновлений пока нет.")
+            empty = QtWidgets.QLabel(i18n.t("home.no_updates"))
             empty.setStyleSheet("QLabel { font-size: 12px; color: #777; padding: 10px; }")
             self._updates_layout.addWidget(empty)
             self._updates_layout.addStretch(1)
@@ -332,7 +363,16 @@ class HomeScreen(QtWidgets.QWidget):
 
         for i, upd in enumerate(updates):
             version = str(upd.get("version", "-"))
-            text = str(upd.get("description") or upd.get("body") or "")
+            language = i18n.get_current_language()
+            text = str(
+                upd.get(f"description_{language}")
+                or upd.get(f"body_{language}")
+                or upd.get(f"text_{language}")
+                or upd.get("description")
+                or upd.get("body")
+                or upd.get("text")
+                or ""
+            )
 
             card = QtWidgets.QFrame()
             card.setStyleSheet("""
@@ -353,7 +393,7 @@ class HomeScreen(QtWidgets.QWidget):
             top_row.addStretch(1)
 
             if i == 0:
-                badge = QtWidgets.QLabel("Новое")
+                badge = QtWidgets.QLabel(i18n.t("home.new_badge"))
                 badge.setAlignment(QtCore.Qt.AlignCenter)
                 badge.setStyleSheet("""
                     QLabel {

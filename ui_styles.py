@@ -1,6 +1,5 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-
 def window_button_style(kind):
     if kind == "close":
         border = "#fecaca"

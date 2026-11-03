@@ -1,9 +1,9 @@
 import datetime
 from PyQt5 import QtWidgets, QtCore, QtGui
 import app_logger
+import i18n
 
 _log = app_logger.get("screens.stats")
-
 
 class LineChartWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
@@ -28,15 +28,44 @@ class LineChartWidget(QtWidgets.QWidget):
         self._target_level = level
         self.update()
 
+    def _score_letter(self, score):
+        letters = {1: "F", 2: "D", 3: "C", 4: "B", 5: "A"}
+        try:
+            s = round(float(score))
+        except (TypeError, ValueError):
+            s = 1
+        s = max(1, min(5, s))
+        return letters[s]
+
+    def _letter_color(self, letter):
+        return {
+            "A": "#1e9e4f",
+            "B": "#5bab2f",
+            "C": "#d9a400",
+            "D": "#e07b00",
+            "E": "#e0521f",
+            "F": "#d92b2b",
+        }.get(letter, "#222222")
+
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
+        try:
+            self._paint(p)
+        finally:
+            p.end()
+
+    def _paint(self, p):
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.fillRect(self.rect(), QtGui.QColor("#ffffff"))
         r = self.rect().adjusted(48, 14, -14, -42)
 
         if len(self._values) < 2:
             p.setPen(QtGui.QPen(QtGui.QColor("#888"), 1))
-            p.drawText(r, QtCore.Qt.AlignCenter, "Недостаточно данных для графика")
+            p.drawText(
+                r,
+                QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
+                i18n.t("stats.insufficient_data")
+            )
             return
 
         vals = self._values
@@ -55,10 +84,11 @@ class LineChartWidget(QtWidgets.QWidget):
             y = y_for(level)
             p.drawLine(int(r.left()), int(y), int(r.right()), int(y))
 
+        letters_for_axis = {1: "F", 2: "D", 3: "C", 4: "B", 5: "A"}
         p.setPen(QtGui.QPen(QtGui.QColor("#777"), 1))
         for level in range(1, 6):
             y = y_for(level)
-            p.drawText(int(r.left()) - 26, int(y) + 5, str(level))
+            p.drawText(int(r.left()) - 26, int(y) + 5, letters_for_axis[level])
 
         pts = [QtCore.QPointF(x_for(i), y_for(v)) for i, v in enumerate(vals)]
 
@@ -77,21 +107,25 @@ class LineChartWidget(QtWidgets.QWidget):
         if self._hover_index is not None and self._hover_index < len(vals):
             i = self._hover_index
             score = vals[i]
-            score_text = str(int(score)) if float(score).is_integer() else f"{score:.1f}"
+            score_text = self._score_letter(score)
 
             raw_date = self._dates[i] if i < len(self._dates) else ""
-            date_text = "Дата неизвестна"
+            date_text = i18n.t("stats.unknown_date")
             try:
                 s = str(raw_date).replace("Z", "").replace(" ", "T")
                 dt = datetime.datetime.fromisoformat(s)
-                months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"]
-                date_text = f"{dt.day} {months[dt.month - 1]} {dt.year} {dt.strftime('%H:%M')}"
+                month = i18n.t(f"stats.months.{dt.month}")
+                date_text = f"{dt.day} {month} {dt.year} {dt.strftime('%H:%M')}"
             except Exception:
                 if raw_date:
                     date_text = str(raw_date)
 
             train_id = self._ids[i] if i < len(self._ids) else i + 1
-            text = f"Тренировка №{train_id}\nОценка: {score_text}/5\nДата: {date_text}"
+            text = (
+                f"{i18n.t('stats.training_number', training_id=train_id)}\n"
+                f"{i18n.t('stats.result_prefix')}{score_text}\n"
+                f"{i18n.t('stats.date_prefix')}{date_text}"
+            )
 
             font = QtGui.QFont()
             font.setPointSize(9)
@@ -119,10 +153,19 @@ class LineChartWidget(QtWidgets.QWidget):
             p.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
             p.drawRoundedRect(box_rect, 10, 10)
 
-            p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
             ty = py + (box_h - metrics.height() * len(lines)) / 2 + metrics.ascent()
+            letter_color = QtGui.QColor(self._letter_color(score_text))
+            prefix = i18n.t("stats.result_prefix")
             for line in lines:
-                p.drawText(px + 11, int(ty), line)
+                if line.startswith(prefix):
+                    p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
+                    p.drawText(px + 11, int(ty), prefix)
+                    prefix_w = metrics.horizontalAdvance(prefix)
+                    p.setPen(QtGui.QPen(letter_color, 1))
+                    p.drawText(px + 11 + prefix_w, int(ty), line[len(prefix):])
+                else:
+                    p.setPen(QtGui.QPen(QtGui.QColor("#222"), 1))
+                    p.drawText(px + 11, int(ty), line)
                 ty += metrics.height()
 
         if self._target_level is not None:
@@ -140,8 +183,8 @@ class LineChartWidget(QtWidgets.QWidget):
             p.setFont(font)
             metrics = QtGui.QFontMetrics(font)
 
-            blue_text = "Результаты"
-            green_text = "Средний результат"
+            blue_text = i18n.t("stats.results")
+            green_text = i18n.t("stats.avg_result")
             item_gap = 42
             line_w = 34
             text_gap = 10
@@ -166,12 +209,13 @@ class LineChartWidget(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, event):
         if len(self._values) < 2:
-            self._hover_index = None
-            self._mouse_pos = None
-            self.update()
+            if self._hover_index is not None or self._mouse_pos is not None:
+                self._hover_index = None
+                self._mouse_pos = None
+                self.update()
             return
 
-        r = self.rect().adjusted(48, 14, -14, -48)
+        r = self.rect().adjusted(48, 14, -14, -42)
         vals = self._values
         vmin, vmax = 1.0, 5.0
 
@@ -192,13 +236,12 @@ class LineChartWidget(QtWidgets.QWidget):
                 nearest_dist = dist
                 nearest = i
 
-        if nearest is not None and nearest_dist <= 8:
-            self._hover_index = nearest
-            self._mouse_pos = event.pos()
-        else:
-            self._hover_index = None
-            self._mouse_pos = None
-        self.update()
+        new_hover = nearest if (nearest is not None and nearest_dist <= 8) else None
+
+        if new_hover != self._hover_index:
+            self._hover_index = new_hover
+            self._mouse_pos = event.pos() if new_hover is not None else None
+            self.update()
 
     def leaveEvent(self, event):
         self._hover_index = None
@@ -211,13 +254,16 @@ class StatsScreen(QtWidgets.QWidget):
         super().__init__(parent)
         self._build()
 
+    def retranslate_chart(self):
+        self.stats_chart.update()
+
     def _build(self):
         self.setStyleSheet("QLabel { border: none; background: transparent; }")
         l = QtWidgets.QVBoxLayout(self)
         l.setContentsMargins(0, 0, 0, 0)
         l.setSpacing(12)
 
-        title = QtWidgets.QLabel("Статистика")
+        title = QtWidgets.QLabel(i18n.t("stats.title"))
         title.setStyleSheet("font-size: 22px; font-weight: 800; color: #222;")
         l.addWidget(title)
 
@@ -226,6 +272,8 @@ class StatsScreen(QtWidgets.QWidget):
 
         def card(t, v, h):
             c = QtWidgets.QFrame()
+            c.setMinimumWidth(0)
+            c.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
             c.setStyleSheet("""
             QFrame { background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 16px; }
             QLabel { border: none; background: transparent; }
@@ -247,14 +295,57 @@ class StatsScreen(QtWidgets.QWidget):
             cl.addWidget(hh)
             return c, vv
 
-        c1, self.stats_total_lbl = card("Проведено тренировок", "-", "Количество решённых заданий")
-        c2, self.stats_avg_score_lbl = card("QWS", "-/5", "Средняя оценка качества ваших знаний")
-        c2.layout().insertWidget(1, self.stats_avg_score_lbl)
-        c3, self.stats_avg_dice_lbl = card("AIS", "-", "Соответствие с областью внимания")
+        def grade_card(t, h):
+            c = QtWidgets.QFrame()
+            c.setStyleSheet("""
+            QFrame { background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 16px; }
+            QLabel { border: none; background: transparent; }
+            """)
+            cl = QtWidgets.QVBoxLayout(c)
+            cl.setContentsMargins(16, 14, 16, 14)
+            cl.setSpacing(6)
 
-        cards.addWidget(c1)
-        cards.addWidget(c2)
-        cards.addWidget(c3)
+            tt = QtWidgets.QLabel(t)
+            tt.setStyleSheet("font-size:12px;color:#777;font-weight:800;")
+            cl.addWidget(tt)
+
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(6)
+            letter_lbl = QtWidgets.QLabel("-")
+            letter_lbl.setStyleSheet("font-size:20px;color:#222;font-weight:900;")
+            pct_lbl = QtWidgets.QLabel("")
+            pct_lbl.setStyleSheet("font-size:14px;color:#222;font-weight:800;")
+            row.addWidget(letter_lbl)
+            row.addStretch(1)
+            row.addWidget(pct_lbl)
+            cl.addLayout(row)
+
+            hh = QtWidgets.QLabel(h)
+            hh.setWordWrap(True)
+            hh.setStyleSheet("font-size:11px;color:#888;font-weight:700;")
+            cl.addWidget(hh)
+
+            return c, letter_lbl, pct_lbl
+
+        c1, self.stats_total_lbl = card(
+            i18n.t("stats.trainings_done"),
+            "-",
+            i18n.t("stats.tasks_solved")
+        )
+
+        c2, self.stats_avg_score_lbl, self.stats_avg_score_pct_lbl = grade_card(
+            "QWS",
+            i18n.t("stats.avg_quality")
+        )
+
+        c3, self.stats_avg_dice_lbl, self.stats_avg_dice_pct_lbl = grade_card(
+            "AIS",
+            i18n.t("stats.attention_match")
+        )
+
+        cards.addWidget(c1, 1)
+        cards.addWidget(c2, 1)
+        cards.addWidget(c3, 1)
         l.addLayout(cards)
 
         box = QtWidgets.QFrame()
@@ -263,7 +354,7 @@ class StatsScreen(QtWidgets.QWidget):
         bl.setContentsMargins(14, 14, 14, 14)
         bl.setSpacing(10)
 
-        t = QtWidgets.QLabel("Динамика результатов за последние 20 тренировок")
+        t = QtWidgets.QLabel(i18n.t("stats.chart_title"))
         t.setStyleSheet("font-size:14px;font-weight:900;color:#222;")
         bl.addWidget(t)
 
@@ -277,6 +368,25 @@ class StatsScreen(QtWidgets.QWidget):
             lab.setFrameShape(QtWidgets.QFrame.NoFrame)
             lab.setLineWidth(0)
 
+    def _score_letter(self, score):
+        letters = {1: "F", 2: "D", 3: "C", 4: "B", 5: "A"}
+        try:
+            s = round(float(score))
+        except (TypeError, ValueError):
+            s = 1
+        s = max(1, min(5, s))
+        return letters[s]
+
+    def _letter_color(self, letter):
+        return {
+            "A": "#1e9e4f",
+            "B": "#5bab2f",
+            "C": "#d9a400",
+            "D": "#e07b00",
+            "E": "#e0521f",
+            "F": "#d92b2b",
+        }.get(letter, "#777777")
+
     def apply_data(self, data):
         try:
             data = list(data or [])
@@ -285,31 +395,6 @@ class StatsScreen(QtWidgets.QWidget):
                 key=lambda x: int(x.get("training_number", 0) or 0),
                 reverse=True
             )
-
-            latest_20 = data[:20]
-            latest_20.reverse()
-
-            scores = []
-            dices = []
-            dates = []
-            ids = []
-
-            for item in latest_20:
-                try:
-                    scores.append(float(item.get("score", 0)))
-                except (ValueError, TypeError):
-                    scores.append(0)
-
-                try:
-                    dices.append(float(item.get("dice", 0.0)))
-                except (ValueError, TypeError):
-                    dices.append(0.0)
-
-                dates.append(
-                    item.get("created_at") or item.get("date") or item.get("ts") or "-"
-                )
-
-                ids.append(item.get("training_number") or "-")
 
             total = len(data)
 
@@ -330,9 +415,57 @@ class StatsScreen(QtWidgets.QWidget):
             avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
             avg_dice = sum(all_dices) / len(all_dices) if all_dices else 0.0
 
+            avg_pct = (avg_score / 5.0 * 100.0) if all_scores else 0.0
+            avg_letter = self._score_letter(avg_score) if all_scores else "-"
+            avg_color = self._letter_color(avg_letter) if all_scores else "#222"
+
+            dice_pct = avg_dice * 100.0
+            dice_letter = self._score_letter(avg_dice * 5.0) if all_dices else "-"
+            dice_color = self._letter_color(dice_letter) if all_dices else "#222"
+
             self.stats_total_lbl.setText(str(total))
-            self.stats_avg_score_lbl.setText(f"{avg_score:.1f}/5")
-            self.stats_avg_dice_lbl.setText(f"{avg_dice:.2f}")
+
+            self.stats_avg_score_lbl.setText(avg_letter)
+            self.stats_avg_score_lbl.setStyleSheet(
+                f"font-size:20px;color:{avg_color};font-weight:900;"
+            )
+            self.stats_avg_score_pct_lbl.setText(f"{avg_pct:.0f}%" if all_scores else "")
+
+            self.stats_avg_dice_lbl.setText(dice_letter)
+            self.stats_avg_dice_lbl.setStyleSheet(
+                f"font-size:20px;color:{dice_color};font-weight:900;"
+            )
+            self.stats_avg_dice_pct_lbl.setText(f"{dice_pct:.0f}%" if all_dices else "")
+
+            if total < 10:
+                self.stats_chart.set_series([], [], [], [])
+                self.stats_chart.set_target_level(None)
+                return
+
+            latest_10 = data[:10]
+            latest_10.reverse()
+
+            scores = []
+            dices = []
+            dates = []
+            ids = []
+
+            for item in latest_10:
+                try:
+                    scores.append(float(item.get("score", 0)))
+                except (ValueError, TypeError):
+                    scores.append(0)
+
+                try:
+                    dices.append(float(item.get("dice", 0.0)))
+                except (ValueError, TypeError):
+                    dices.append(0.0)
+
+                dates.append(
+                    item.get("created_at") or item.get("date") or item.get("ts") or "-"
+                )
+
+                ids.append(item.get("training_number") or "-")
 
             self.stats_chart.set_series(scores, [], dates, ids)
             self.stats_chart.set_target_level(int(avg_score + 0.5) if all_scores else None)

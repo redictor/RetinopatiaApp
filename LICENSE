@@ -1,27 +1,57 @@
-RetinopatiaApp Non-Commercial License
+Custom Non-Commercial License
 
 Copyright (c) 2026 Andrew Tyurin (Redictor)
 
-Permission is granted to view, study, download, and modify the source code of RetinopatiaApp for personal, educational, and non-commercial purposes.
+Permission is granted to view, study, download, and modify the source code of
+RetinopatiaApp ("the Software") for personal, educational, and non-commercial
+purposes only, subject to the conditions below.
 
 You may:
 
-* view and study the source code;
-* run the software for personal or educational purposes;
-* modify the source code for personal or educational purposes;
-* share the original source code, provided that this license and the original copyright notice are retained.
+- view and study the source code;
+- run the Software for personal or educational purposes;
+- modify the source code for personal or educational purposes;
+- share the original, unmodified source code, provided that this license and
+  the original copyright notice are retained in full;
+- submit patches, bug fixes, or improvements back to the original project
+  (e.g. via pull request), which the copyright holder may accept at their
+  sole discretion.
 
 You may not:
 
-* use RetinopatiaApp or its source code for commercial purposes;
-* sell, sublicense, rent, or otherwise commercially distribute the software or derivative works;
-* incorporate the source code into a commercial product or service;
-* remove or alter copyright notices or claim the software as your own.
+- use the Software or its source code, in whole or in part, for any
+  commercial purpose, including but not limited to selling, licensing,
+  renting, or offering it as a paid service (SaaS, B2B, or otherwise);
+- create, distribute, host, or offer any derivative work, fork, or modified
+  version of the Software — publicly or privately, free or paid — without
+  prior written permission from the copyright holder;
+- remove, disable, or circumvent any authentication, licensing, or access
+  control mechanisms contained in the Software;
+- remove or alter copyright notices, or represent the Software (or any
+  derivative of it) as your own original work;
+- use the name "RetinopatiaApp", the author's name, or associated branding to
+  promote a derivative product or service without permission.
 
-Any use not expressly permitted by this license requires prior written permission from the copyright holder.
+Permissions
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+Any use not expressly permitted by this license — including any commercial
+use or distribution of derivative works — requires prior written permission
+from the copyright holder. Contact: Andrew Tyurin (Redictor).
 
-For permissions beyond the scope of this license, contact the copyright holder.
+Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Governing Law
+
+This license shall be governed by and construed in accordance with the laws
+of the Russian Federation, without regard to its conflict of law provisions.
 
 Copyright holder: Andrew Tyurin (Redictor)
+Contact: support.retinopatia.app@gmail.com
