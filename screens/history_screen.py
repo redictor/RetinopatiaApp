@@ -232,15 +232,49 @@ class HistoryScreen(QtWidgets.QWidget):
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(4)
 
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setSpacing(8)
+
         title = QtWidgets.QLabel(
             i18n.t("history.training_number", training_id=training_id)
         )
-        title.setStyleSheet("font-size: 15px; font-weight: 900; color: #111827;")
+        title.setStyleSheet(
+            "font-size: 15px; font-weight: 900; color: #111827;"
+        )
+        title_row.addWidget(title)
+
+        if str(item.get("origin", "pc")).lower() == "mobile":
+            icon_pixmap = QtGui.QPixmap(18, 22)
+            icon_pixmap.fill(QtCore.Qt.transparent)
+
+            painter = QtGui.QPainter(icon_pixmap)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+            pen = QtGui.QPen(QtGui.QColor("#0078D7"))
+            pen.setWidthF(1.8)
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.NoBrush)
+
+            painter.drawRoundedRect(
+                QtCore.QRectF(3, 1, 12, 19), 2.5, 2.5
+            )
+            painter.drawLine(7, 4, 11, 4)
+            painter.drawEllipse(QtCore.QPointF(9, 17), 0.8, 0.8)
+            painter.end()
+
+            mobile_icon = QtWidgets.QLabel()
+            mobile_icon.setPixmap(icon_pixmap)
+            mobile_icon.setFixedSize(18, 22)
+            mobile_icon.setToolTip("Mobile training")
+
+            title_row.addWidget(mobile_icon)
+
+        title_row.addStretch()
 
         date_label = QtWidgets.QLabel(date)
         date_label.setStyleSheet("font-size: 12px; color: #6b7280;")
 
-        left.addWidget(title)
+        left.addLayout(title_row)
         left.addWidget(date_label)
         layout.addLayout(left, 2)
 
